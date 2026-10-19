@@ -45,7 +45,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   FlashMode _flashMode = FlashMode.off;
   double _currentZoom = 1.0;
   double _minZoom = 1.0;
-  double _maxZoom = 5.0;
+  double _maxZoom = 8.0;
   
   bool _showZoomWheel = false;
   DateTime _lastZoomInteraction = DateTime.now();
@@ -55,6 +55,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _isLiveEnabled = true;
   bool _showTopControlsMenu = false;
   bool _isShutterSoundOn = true;
+  
+  // أبعاد الكادر (Aspect Ratios)
+  String _selectedAspectRatio = '4:3';
 
   @override
   void initState() {
@@ -102,9 +105,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       await controller!.initialize();
       _minZoom = await controller!.getMinZoomLevel();
       _maxZoom = await controller!.getMaxZoomLevel();
-      if (_maxZoom > 6.0) _maxZoom = 6.0;
-      _currentZoom = 1.0;
-      await controller!.setZoomLevel(1.0);
+      if (_maxZoom < 5.0) _maxZoom = 8.0; // ضمان دعم زوم الجهاز الحقيقي
+      
+      _currentZoom = _minZoom;
+      await controller!.setZoomLevel(_currentZoom);
       await controller!.setFlashMode(_flashMode);
       if (mounted) setState(() {});
     } catch (e) {
@@ -140,20 +144,15 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
 
     try {
-      if (_isShutterSoundOn) SystemSound.play(SystemSoundType.click);
+      if (_isShutterSoundOn) {
+        SystemSound.play(SystemSoundType.click);
+        HapticFeedback.mediumImpact();
+      }
 
       final image = await controller!.takePicture();
       await Gal.putImage(image.path);
       
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(_isLiveEnabled ? '✨ Live Photo Captured & Saved' : '📸 Pro Photo Captured'),
-            backgroundColor: _isLiveEnabled ? Colors.amber[800] : Colors.black87,
-            duration: const Duration(milliseconds: 1000),
-          ),
-        );
-      }
+      // تم إلغاء ظهور أي رسائل مزعجة في الأسفل (SnackBar) لتجربة التقاط نقية تماماً
     } catch (e) {
       print('Error capturing: $e');
     }
@@ -169,7 +168,20 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     } else {
       await controller!.startVideoRecording();
       setState(() { _isRecording = true; });
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Recording... 🔴', style: TextStyle(color: Colors.red))));
+    }
+  }
+
+  double _getAspectRatioValue() {
+    switch (_selectedAspectRatio) {
+      case '1:1':
+        return 1.0;
+      case '16:9':
+        return 16.5 / 9;
+      case 'Full':
+        return 9 / 19.5;
+      case '4:3':
+      default:
+        return 3 / 4;
     }
   }
 
@@ -189,28 +201,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       return const Scaffold(backgroundColor: Colors.black, body: Center(child: CircularProgressIndicator(color: Colors.amber)));
     }
 
-    // التحقق هل الكاميرا الحالية أمامية لعكس الصورة وظبطها بالشكل الصحيح
-    bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
-
     Widget previewWidget = AspectRatio(
-      aspectRatio: 3 / 4,
-      child: ClipRect(
-        child: OverflowBox(
-          alignment: Alignment.center,
-          child: FittedBox(
-            fit: BoxFit.fitHeight,
-            child: SizedBox(
-              width: controller!.value.previewSize?.height ?? 720,
-              height: controller!.value.previewSize?.width ?? 1280,
-              child: Transform(
-                alignment: Alignment.center,
-                transform: isFrontCamera ? Matrix4.rotationY(3.14159) : Matrix4.identity(),
-                child: CameraPreview(controller!),
-              ),
-            ),
-          ),
-        ),
-      ),
+      aspectRatio: _getAspectRatioValue(),
+      child: CameraPreview(controller!),
     );
 
     return Scaffold(
@@ -223,7 +216,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 setState(() { _showZoomWheel = true; });
               },
               onScaleUpdate: (details) async {
-                double newZoom = (_currentZoom * (details.scale > 1 ? 1.02 : 0.98))
+                double newZoom = (_currentZoom * (details.scale > 1 ? 1.03 : 0.97))
                     .clamp(_minZoom, _maxZoom);
                 setState(() {
                   _currentZoom = newZoom;
@@ -272,6 +265,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 GestureDetector(
                   onTap: () {
                     setState(() { _isLiveEnabled = !_isLiveEnabled; });
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(_isLiveEnabled ? '✨ Live Photo: ON' : 'Live Photo: OFF'),
+                        duration: const Duration(milliseconds: 600),
+                        backgroundColor: Colors.amber[800],
+                      ),
+                    );
                   },
                   child: Container(
                     padding: const EdgeInsets.all(4),
@@ -293,31 +293,47 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             ),
           ),
 
+          // قائمة الإعدادات العلوية المحدثة (صوت الالتقاط + أبعاد الصور)
           if (_showTopControlsMenu)
             Positioned(
               top: 95,
-              left: 30,
-              right: 30,
+              left: 25,
+              right: 25,
               child: Container(
-                padding: const EdgeInsets.all(15),
+                padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.85),
+                  color: Colors.black.withOpacity(0.9),
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.white24),
+                  border: Border.all(color: Colors.amber.withOpacity(0.4)),
                 ),
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     SwitchListTile(
                       activeColor: Colors.amber,
-                      title: const Text('Live Photo Mode', style: TextStyle(color: Colors.white, fontSize: 13)),
-                      value: _isLiveEnabled,
-                      onChanged: (val) => setState(() => _isLiveEnabled = val),
-                    ),
-                    SwitchListTile(
-                      activeColor: Colors.amber,
-                      title: const Text('Shutter Sound', style: TextStyle(color: Colors.white, fontSize: 13)),
+                      title: const Text('صوت ضغطة الكاميرا', style: TextStyle(color: Colors.white, fontSize: 13)),
                       value: _isShutterSoundOn,
                       onChanged: (val) => setState(() => _isShutterSoundOn = val),
+                    ),
+                    const Divider(color: Colors.white24),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text('أبعاد الإطار:', style: TextStyle(color: Colors.white, fontSize: 13)),
+                        DropdownButton<String>(
+                          dropdownColor: Colors.grey[900],
+                          value: _selectedAspectRatio,
+                          items: ['4:3', '16:9', '1:1', 'Full'].map((ratio) {
+                            return DropdownMenuItem(
+                              value: ratio,
+                              child: Text(ratio, style: const TextStyle(color: Colors.amber, fontSize: 13)),
+                            );
+                          }).toList(),
+                          onChanged: (val) {
+                            if (val != null) setState(() => _selectedAspectRatio = val);
+                          },
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -350,7 +366,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                       Slider(
                         value: _currentZoom,
                         min: _minZoom,
-                        max: _maxZoom,
+                        max: _maxZoom > 6.0 ? 6.0 : _maxZoom,
                         activeColor: Colors.amber,
                         inactiveColor: Colors.white24,
                         onChanged: (val) async {
@@ -367,7 +383,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               ),
             ),
 
-          // أزرار التكبير الثابتة (مفصولة ومنظمة تماماً)
+          // أزرار التكبير الثابتة (متوافقة مع عتاد التليفون الحقيقي)
           Positioned(
             bottom: 175,
             left: 0,
@@ -375,7 +391,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             child: Center(
               child: Row(
                 mainAxisSize: MainAxisSize.min,
-                children: [0.5, 1.0, 2.0].map((zoomVal) {
+                children: [_minZoom, 1.0, 2.0].where((z) => z >= _minZoom && z <= _maxZoom).map((zoomVal) {
                   bool isSel = (_currentZoom - zoomVal).abs() < 0.3;
                   return Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 6.0),
@@ -386,15 +402,15 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                       },
                       child: Container(
                         height: 32,
-                        width: 32,
+                        width: 38,
                         decoration: BoxDecoration(
-                          shape: BoxShape.circle,
+                          borderRadius: BorderRadius.circular(16),
                           color: isSel ? Colors.amber : Colors.black54,
                           border: Border.all(color: Colors.white24),
                         ),
                         child: Center(
                           child: Text(
-                            zoomVal == 0.5 ? '.5' : '${zoomVal.toInt()}',
+                            '${zoomVal.toStringAsFixed(0)}x',
                             style: TextStyle(
                               color: isSel ? Colors.black : Colors.white,
                               fontSize: 11,
@@ -410,7 +426,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             ),
           ),
 
-          // الشريط السفلي (شريط الأوضاع وأزرار الالتقاط)
+          // الشريط السفلي (الأوضاع + المعرض والالتقاط)
           Positioned(
             bottom: 20,
             left: 0,
