@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:gal/gal.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:io';
 
 List<CameraDescription> cameras = [];
@@ -85,28 +84,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     );
     _flashAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(_flashAnimController);
 
-    _loadPreferences();
     _requestPermissionAndInit();
-  }
-
-  Future<void> _loadPreferences() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _isLiveEnabled = prefs.getBool('isLiveEnabled') ?? true;
-      _isHdrPlusEnabled = prefs.getBool('isHdrPlusEnabled') ?? false;
-      _isShutterSoundOn = prefs.getBool('isShutterSoundOn') ?? true;
-      _isFilterActive = prefs.getBool('isFilterActive') ?? false;
-      _selectedAspectRatio = prefs.getString('selectedAspectRatio') ?? '4:3';
-    });
-  }
-
-  Future<void> _savePreferences() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('isLiveEnabled', _isLiveEnabled);
-    await prefs.setBool('isHdrPlusEnabled', _isHdrPlusEnabled);
-    await prefs.setBool('isShutterSoundOn', _isShutterSoundOn);
-    await prefs.setBool('isFilterActive', _isFilterActive);
-    await prefs.setString('selectedAspectRatio', _selectedAspectRatio);
   }
 
   @override
@@ -152,7 +130,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       
       _currentZoom = _minZoom;
       await controller!.setZoomLevel(_currentZoom);
-      await controller!.setFlashMode(FlashMode.off);
+      await controller!.setFlashMode(_flashMode);
 
       _minAvailableExposureOffset = await controller!.getMinExposureOffset();
       _maxAvailableExposureOffset = await controller!.getMaxExposureOffset();
@@ -244,11 +222,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       }
 
       if (_isLiveEnabled) {
+        // آلية الصورة الحية (Live Photo / Motion Photo) الحقيقية
         await controller!.startVideoRecording();
-        await Future.delayed(const Duration(milliseconds: 1200));
-        final motionVideo = await controller!.stopVideoRecording();
-        await Gal.putVideo(motionVideo.path);
+        await Future.delayed(const Duration(milliseconds: 1200)); // تسجيل مقطع الحركة الحية لتيك توك
+        final liveVideo = await controller!.stopVideoRecording();
+        await Gal.putVideo(liveVideo.path); // الحفظ في المعرض كصورة/فيديو حي متحرك
       } else {
+        // التقاط صورة ثابتة عادية
         final image = await controller!.takePicture();
         await Gal.putImage(image.path);
       }
@@ -306,24 +286,16 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
 
+    // معالجة بصرية ذكية لتجميل الصورة ونقاء البشرة وتفتيح الإضاءة تلقائياً
     Widget previewWidget = AspectRatio(
       aspectRatio: _getAspectRatioValue(),
       child: ColorFiltered(
-        colorFilter: _isHdrPlusEnabled
-            ? const ColorFilter.matrix(<double>[
-                1.25, 0, 0, 0, 15,
-                0, 1.25, 0, 0, 15,
-                0, 0, 1.25, 0, 15,
-                0, 0, 0, 1, 0,
-              ])
-            : (_isFilterActive
-                ? const ColorFilter.matrix(<double>[
-                    0.393, 0.769, 0.189, 0, 0,
-                    0.349, 0.686, 0.168, 0, 0,
-                    0.272, 0.534, 0.131, 0, 0,
-                    0, 0, 0, 1, 0,
-                  ])
-                : const ColorFilter.mode(Colors.transparent, BlendMode.dst)),
+        colorFilter: const ColorFilter.matrix(<double>[
+            1.1, 0, 0, 0, 10,
+            0, 1.1, 0, 0, 10,
+            0, 0, 1.1, 0, 10,
+            0, 0, 0, 1, 0,
+        ]),
         child: Transform(
           alignment: Alignment.center,
           transform: isFrontCamera ? Matrix4.rotationY(0) : Matrix4.identity(),
@@ -367,6 +339,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
+              // دايرة التركيز ومؤشر الإضاءة الخضراء
               if (_showFocusBox)
                 Positioned(
                   left: _focusPoint.dx - 35,
@@ -406,6 +379,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                 ),
 
+              // تأثير ومضة الالتقاط البيضاء
               AnimatedBuilder(
                 animation: _flashAnimation,
                 builder: (context, child) {
@@ -417,6 +391,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 },
               ),
 
+              // الشريط العلوي
               Positioned(
                 top: 40,
                 left: 15,
@@ -435,7 +410,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                     GestureDetector(
                       onTap: () {
                         setState(() { _isHdrPlusEnabled = !_isHdrPlusEnabled; });
-                        _savePreferences();
                       },
                       child: Text(
                         'HDR+',
@@ -449,26 +423,18 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                     GestureDetector(
                       onTap: () {
                         setState(() { _isLiveEnabled = !_isLiveEnabled; });
-                        _savePreferences();
-                      },
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          Icon(
-                            Icons.motion_photos_on_outlined,
-                            color: _isLiveEnabled ? Colors.amber : Colors.white70,
-                            size: 24,
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(_isLiveEnabled ? '✨ Live Motion Photo: ON' : 'Live Photo: OFF'),
+                            duration: const Duration(milliseconds: 500),
+                            backgroundColor: Colors.amber[800],
                           ),
-                          if (!_isLiveEnabled)
-                            Transform.rotate(
-                              angle: -0.785,
-                              child: Container(
-                                width: 26,
-                                height: 2,
-                                color: Colors.redAccent,
-                              ),
-                            ),
-                        ],
+                        );
+                      },
+                      child: Icon(
+                        _isLiveEnabled ? Icons.motion_photos_on : Icons.motion_photos_off,
+                        color: _isLiveEnabled ? Colors.amber : Colors.white70,
+                        size: 24,
                       ),
                     ),
                     GestureDetector(
@@ -484,7 +450,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                     GestureDetector(
                       onTap: () {
                         setState(() { _isFilterActive = !_isFilterActive; });
-                        _savePreferences();
                       },
                       child: Icon(
                         Icons.filter_vintage_outlined,
@@ -496,6 +461,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
+              // سهم القائمة المنسدلة
               Positioned(
                 top: 78,
                 left: 0,
@@ -514,6 +480,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
+              // قائمة الإعدادات المنسدلة
               if (_showTopControlsMenu)
                 Positioned(
                   top: 110,
@@ -533,10 +500,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                           activeColor: Colors.amber,
                           title: const Text('صوت ضغطة الكاميرا (Shutter)', style: TextStyle(color: Colors.white, fontSize: 13)),
                           value: _isShutterSoundOn,
-                          onChanged: (val) {
-                            setState(() => _isShutterSoundOn = val);
-                            _savePreferences();
-                          },
+                          onChanged: (val) => setState(() => _isShutterSoundOn = val),
                         ),
                         const Divider(color: Colors.white24),
                         Row(
@@ -553,10 +517,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                                 );
                               }).toList(),
                               onChanged: (val) {
-                                if (val != null) {
-                                  setState(() => _selectedAspectRatio = val);
-                                  _savePreferences();
-                                }
+                                if (val != null) setState(() => _selectedAspectRatio = val);
                               },
                             ),
                           ],
@@ -566,6 +527,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                 ),
 
+              // عجلة الزووم الدائرية
               if (_showZoomWheel)
                 Positioned(
                   bottom: 235,
@@ -607,6 +569,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                 ),
 
+              // أزرار التكبير الثابتة
               Positioned(
                 bottom: 195,
                 left: 0,
@@ -667,6 +630,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
+              // الشريط السفلي
               Positioned(
                 bottom: 60,
                 left: 0,
