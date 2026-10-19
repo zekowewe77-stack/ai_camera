@@ -142,31 +142,17 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     try {
       if (_isShutterSoundOn) SystemSound.play(SystemSoundType.click);
 
-      if (_isLiveEnabled) {
-        final image = await controller!.takePicture();
-        await Gal.putImage(image.path);
-        
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('✨ Live Photo Saved'),
-              backgroundColor: Colors.black87,
-              duration: Duration(milliseconds: 1200),
-            ),
-          );
-        }
-      } else {
-        final image = await controller!.takePicture();
-        await Gal.putImage(image.path);
-        
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('📸 Pro Photo Captured'),
-              duration: Duration(milliseconds: 800),
-            ),
-          );
-        }
+      final image = await controller!.takePicture();
+      await Gal.putImage(image.path);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_isLiveEnabled ? '✨ Live Photo Captured & Saved' : '📸 Pro Photo Captured'),
+            backgroundColor: _isLiveEnabled ? Colors.amber[800] : Colors.black87,
+            duration: const Duration(milliseconds: 1000),
+          ),
+        );
       }
     } catch (e) {
       print('Error capturing: $e');
@@ -189,7 +175,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   @override
   void dispose() {
-    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.removeObserver(this);
     controller?.dispose();
     super.dispose();
   }
@@ -203,9 +189,28 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       return const Scaffold(backgroundColor: Colors.black, body: Center(child: CircularProgressIndicator(color: Colors.amber)));
     }
 
+    // التحقق هل الكاميرا الحالية أمامية لعكس الصورة وظبطها بالشكل الصحيح
+    bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
+
     Widget previewWidget = AspectRatio(
       aspectRatio: 3 / 4,
-      child: CameraPreview(controller!),
+      child: ClipRect(
+        child: OverflowBox(
+          alignment: Alignment.center,
+          child: FittedBox(
+            fit: BoxFit.fitHeight,
+            child: SizedBox(
+              width: controller!.value.previewSize?.height ?? 720,
+              height: controller!.value.previewSize?.width ?? 1280,
+              child: Transform(
+                alignment: Alignment.center,
+                transform: isFrontCamera ? Matrix4.rotationY(3.14159) : Matrix4.identity(),
+                child: CameraPreview(controller!),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
 
     return Scaffold(
@@ -319,7 +324,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               ),
             ),
 
-          // عجلة الزووم الدائرية الاحترافية (تظهر عند السحب)
+          // عجلة الزووم الدائرية
           if (_showZoomWheel)
             Positioned(
               bottom: 215,
@@ -362,7 +367,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               ),
             ),
 
-          // أزرار التكبير الثابتة (مرفوعة تماماً ومفصولة عن شريط الأوضاع لمنع أي تداخل)
+          // أزرار التكبير الثابتة (مفصولة ومنظمة تماماً)
           Positioned(
             bottom: 175,
             left: 0,
@@ -405,7 +410,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             ),
           ),
 
-          // الشريط السفلي (شريط الأوضاع + زر المعالجة والالتقاط والتبديل)
+          // الشريط السفلي (شريط الأوضاع وأزرار الالتقاط)
           Positioned(
             bottom: 20,
             left: 0,
@@ -413,7 +418,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // شريط الأوضاع الأفقي (متباعد وآمن تماماً)
                 SizedBox(
                   height: 30,
                   child: ListView(
@@ -440,7 +444,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
                 const SizedBox(height: 12),
 
-                // صف الأزرار السفلية (المعرض، زر الالتقاط، تبديل الكاميرا)
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
