@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:gal/gal.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:io';
 
 List<CameraDescription> cameras = [];
@@ -53,7 +54,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   String _currentMode = 'PHOTO';
   bool _isRecording = false;
-  bool _isLiveEnabled = true;
+  bool _isLiveEnabled = true; // Live Photo افتراضياً مفعلة
   bool _isHdrPlusEnabled = false;
   bool _isTimerActive = false;
   bool _isFilterActive = false;
@@ -84,7 +85,29 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     );
     _flashAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(_flashAnimController);
 
+    _loadPreferences();
     _requestPermissionAndInit();
+  }
+
+  // حفظ واسترجاع الإعدادات عند الخروج والعودة
+  Future<void> _loadPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _isLiveEnabled = prefs.getBool('isLiveEnabled') ?? true;
+      _isHdrPlusEnabled = prefs.getBool('isHdrPlusEnabled') ?? false;
+      _isShutterSoundOn = prefs.getBool('isShutterSoundOn') ?? true;
+      _isFilterActive = prefs.getBool('isFilterActive') ?? false;
+      _selectedAspectRatio = prefs.getString('selectedAspectRatio') ?? '4:3';
+    });
+  }
+
+  Future<void> _savePreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('isLiveEnabled', _isLiveEnabled);
+    await prefs.setBool('isHdrPlusEnabled', _isHdrPlusEnabled);
+    await prefs.setBool('isShutterSoundOn', _isShutterSoundOn);
+    await prefs.setBool('isFilterActive', _isFilterActive);
+    await prefs.setString('selectedAspectRatio', _selectedAspectRatio);
   }
 
   @override
@@ -130,7 +153,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       
       _currentZoom = _minZoom;
       await controller!.setZoomLevel(_currentZoom);
-      await controller!.setFlashMode(_flashMode);
+      await controller!.setFlashMode(FlashMode.off); // الفلاش يبدأ مطفأ عند الفتح دائماً
 
       _minAvailableExposureOffset = await controller!.getMinExposureOffset();
       _maxAvailableExposureOffset = await controller!.getMaxExposureOffset();
@@ -221,16 +244,16 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         HapticFeedback.heavyImpact();
       }
 
-      // التقاط الصورة الفورية النقية
-      final image = await controller!.takePicture();
-      await Gal.putImage(image.path);
-
-      // إذا كان وضع الـ Live Photo مفعل، نقوم بتسجيل مقطع الحركة المدمج للـ Motion Photo
       if (_isLiveEnabled) {
+        // آلية الصورة المتحركة (Live Motion Photo): تسجيل مقطع فيديو قصير قبل وبعد الضغط ليعمل كفيديو متحرك لتيك توك
         await controller!.startVideoRecording();
-        await Future.delayed(const Duration(milliseconds: 1000)); // تسجيل ثانية واحدة للحركة الحية
-        final liveVideo = await controller!.stopVideoRecording();
-        await Gal.putVideo(liveVideo.path); // يحفظ كملف حركة حي في المعرض
+        await Future.delayed(const Duration(milliseconds: 1200)); // تسجيل ثانية وربع للحركة قبل/أثناء الالتقاط
+        final motionVideo = await controller!.stopVideoRecording();
+        await Gal.putVideo(motionVideo.path); // حفظ الفيديو المتحركة في المعرض
+      } else {
+        // التقاط صورة ثابتة عادية
+        final image = await controller!.takePicture();
+        await Gal.putImage(image.path);
       }
     } catch (e) {
       print('Error capturing: $e');
@@ -269,7 +292,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
+    WidgetsBinding.instance.addObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
@@ -286,16 +309,24 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
 
-    // معالجة بصرية ذكية لتجميل الصورة ونقاء البشرة وتفتيح الإضاءة تلقائياً (Beautification & Clarity)
     Widget previewWidget = AspectRatio(
       aspectRatio: _getAspectRatioValue(),
       child: ColorFiltered(
-        colorFilter: const ColorFilter.matrix(<double>[
-            1.1, 0, 0, 0, 10,   // زيادة النقاء والوضوح
-            0, 1.1, 0, 0, 10,   // تجميل وتفتيح البشرة والألوان
-            0, 0, 1.1, 0, 10,
-            0, 0, 0, 1, 0,
-        ]),
+        colorFilter: _isHdrPlusEnabled
+            ? const ColorFilter.matrix(<double>[
+                1.25, 0, 0, 0, 15,
+                0, 1.25, 0, 0, 15,
+                0, 0, 1.25, 0, 15,
+                0, 0, 0, 1, 0,
+              ])
+            : (_isFilterActive
+                ? const ColorFilter.matrix(<double>[
+                    0.393, 0.769, 0.189, 0, 0,
+                    0.349, 0.686, 0.168, 0, 0,
+                    0.272, 0.534, 0.131, 0, 0,
+                    0, 0, 0, 1, 0,
+                  ])
+                : const ColorFilter.mode(Colors.transparent, BlendMode.dst)),
         child: Transform(
           alignment: Alignment.center,
           transform: isFrontCamera ? Matrix4.rotationY(0) : Matrix4.identity(),
@@ -410,6 +441,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                     GestureDetector(
                       onTap: () {
                         setState(() { _isHdrPlusEnabled = !_isHdrPlusEnabled; });
+                        _savePreferences();
                       },
                       child: Text(
                         'HDR+',
@@ -420,21 +452,30 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                         ),
                       ),
                     ),
+                    // أيقونة الصورة المتحركة (Live Photo) مع الشرطة والمقاطعة تماماً زي الصورة اللي بعتها
                     GestureDetector(
                       onTap: () {
                         setState(() { _isLiveEnabled = !_isLiveEnabled; });
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(_isLiveEnabled ? '✨ Live Motion Photo: ON' : 'Live Photo: OFF'),
-                            duration: const Duration(milliseconds: 500),
-                            backgroundColor: Colors.amber[800],
-                          ),
-                        );
+                        _savePreferences();
                       },
-                      child: Icon(
-                        Icons.adjust,
-                        color: _isLiveEnabled ? Colors.amber : Colors.white70,
-                        size: 22,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Icon(
+                            Icons.motion_photos_on_outlined,
+                            color: _isLiveEnabled ? Colors.amber : Colors.white70,
+                            size: 24,
+                          ),
+                          if (!_isLiveEnabled)
+                            Transform.rotate(
+                              angle: -0.785, // زاوية ميل الشرطة القاطعة
+                              child: Container(
+                                width: 26,
+                                height: 2,
+                                color: Colors.redAccent,
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                     GestureDetector(
@@ -450,6 +491,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                     GestureDetector(
                       onTap: () {
                         setState(() { _isFilterActive = !_isFilterActive; });
+                        _savePreferences();
                       },
                       child: Icon(
                         Icons.filter_vintage_outlined,
@@ -500,7 +542,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                           activeColor: Colors.amber,
                           title: const Text('صوت ضغطة الكاميرا (Shutter)', style: TextStyle(color: Colors.white, fontSize: 13)),
                           value: _isShutterSoundOn,
-                          onChanged: (val) => setState(() => _isShutterSoundOn = val),
+                          onChanged: (val) {
+                            setState(() => _isShutterSoundOn = val);
+                            _savePreferences();
+                          },
                         ),
                         const Divider(color: Colors.white24),
                         Row(
@@ -517,7 +562,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                                 );
                               }).toList(),
                               onChanged: (val) {
-                                if (val != null) setState(() => _selectedAspectRatio = val);
+                                if (val != null) {
+                                  setState(() => _selectedAspectRatio = val);
+                                  _savePreferences();
+                                }
                               },
                             ),
                           ],
