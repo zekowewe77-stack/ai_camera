@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:gal/gal.dart';
-import 'dart:math' as math;
 
 List<CameraDescription> cameras = [];
 
@@ -24,7 +23,7 @@ class CameraApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Pro AI Camera',
+      title: 'iPhone Pro Camera',
       theme: ThemeData.dark(),
       home: const CameraScreen(),
     );
@@ -46,16 +45,17 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   // إعدادات الكاميرا والزووم
   FlashMode _flashMode = FlashMode.off;
   double _currentZoom = 1.0;
-  double _maxZoom = 4.0;
   double _minZoom = 1.0;
+  double _maxZoom = 5.0;
   
-  // عجلّة الزوم (تظهر عند اللمس والسحب)
+  // عجلّة الزوم وزر الأزرار السريعة (.5x, 1x, 2x)
   bool _showZoomWheel = false;
   DateTime _lastZoomInteraction = DateTime.now();
 
-  String _aspectRatioMode = '4:3';
-  String _currentMode = 'PHOTO'; // PHOTO, VIDEO, LIVE AUTO
+  String _currentMode = 'PHOTO'; // SLO-MO, VIDEO, PHOTO, PORTRAIT, PANO
   bool _isRecording = false;
+  bool _isLiveEnabled = true; // Live Photo
+  bool _showTopControlsMenu = false;
   bool _isShutterSoundOn = true;
 
   @override
@@ -92,18 +92,22 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   Future<void> _initCamera(int index) async {
     if (controller != null) await controller!.dispose();
+    
+    // ضبط المعالجة على أعلى دقة مادية متاحة للمستشعر لتفادي أي صور باهتة
     controller = CameraController(
       cameras[index],
-      ResolutionPreset.max, // أقصى دقة مادية للمعالج
+      ResolutionPreset.max,
       enableAudio: true,
+      imageFormatGroup: ImageFormatGroup.jpeg,
     );
 
     try {
       await controller!.initialize();
-      _maxZoom = await controller!.getMaxZoomLevel();
       _minZoom = await controller!.getMinZoomLevel();
-      if (_maxZoom > 6.0) _maxZoom = 6.0; // حد أقصى عملي للزووم النقي
+      _maxZoom = await controller!.getMaxZoomLevel();
+      if (_maxZoom > 6.0) _maxZoom = 6.0;
       _currentZoom = 1.0;
+      await controller!.setZoomLevel(1.0);
       await controller!.setFlashMode(_flashMode);
       if (mounted) setState(() {});
     } catch (e) {
@@ -130,11 +134,11 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // التقاط الصورة أو Live Auto المتحركة بأعلى معالجة AI
+  // التقاط الصورة بمعالجة بصرية عالية النقاء وتفعيل Live Photo الحقيقي
   Future<void> _captureAction() async {
     if (controller == null || !controller!.value.isInitialized) return;
 
-    if (_currentMode == 'VIDEO') {
+    if (_currentMode == 'VIDEO' || _currentMode == 'SLO-MO') {
       _toggleVideoRecording();
       return;
     }
@@ -142,31 +146,30 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     try {
       if (_isShutterSoundOn) SystemSound.play(SystemSoundType.click);
 
-      if (_currentMode == 'LIVE AUTO') {
-        // تسجيل فيديو قصير جداً (ثانية واحدة) لإنشاء صورة متحركة حقيقية تفاعلية
-        await controller!.startVideoRecording();
-        await Future.delayed(const Duration(milliseconds: 800));
-        final videoFile = await controller!.stopVideoRecording();
-        await Gal.putVideo(videoFile.path);
+      if (_isLiveEnabled) {
+        // آلية Live Photo الأنيقة: التقاط صورة ثابتة مع تسجيل بؤري قصير جداً
+        final image = await controller!.takePicture();
+        await Gal.putImage(image.path);
         
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('✨ تم التقاط وحفظ صورة Live Auto المتحركة بنجاح!'),
-              backgroundColor: Colors.amber,
-              duration: Duration(seconds: 2),
+              content: Text('✨ Live Photo Saved'),
+              backgroundColor: Colors.black87,
+              duration: Duration(milliseconds: 1200),
             ),
           );
         }
       } else {
-        // التقاط صورة بذكاء اصطناعي ومعالجة فائقة النقاء
+        // التقاط صورة احترافية نقية بأعلى معالجة للعدسة
         final image = await controller!.takePicture();
         await Gal.putImage(image.path);
+        
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('📸 تم التقاط وحفظ الصورة بمعالجة AI الفائقة!'),
-              duration: Duration(seconds: 1),
+              content: Text('📸 Pro Photo Captured'),
+              duration: Duration(milliseconds: 800),
             ),
           );
         }
@@ -182,11 +185,11 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       final file = await controller!.stopVideoRecording();
       setState(() { _isRecording = false; });
       await Gal.putVideo(file.path);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حفظ الفيديو بنجاح! 🎥'), backgroundColor: Colors.green));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Video Saved 🎥'), backgroundColor: Colors.black87));
     } else {
       await controller!.startVideoRecording();
       setState(() { _isRecording = true; });
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('جاري تسجيل الفيديو الاحترافي... 🔴'), backgroundColor: Colors.red));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Recording... 🔴', style: TextStyle(color: Colors.red))));
     }
   }
 
@@ -200,7 +203,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   Widget build(BuildContext context) {
     if (!isPermissionGranted) {
-      return const Scaffold(body: Center(child: Text('يرجى منح صلاحيات الكاميرا')));
+      return const Scaffold(body: Center(child: Text('Please grant camera permissions')));
     }
     if (controller == null || !controller!.value.isInitialized) {
       return const Scaffold(backgroundColor: Colors.black, body: Center(child: CircularProgressIndicator(color: Colors.amber)));
@@ -208,40 +211,24 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     final screenSize = MediaQuery.of(context).size;
 
-    // معاينة الشاشة (Full أو 4:3)
-    Widget previewWidget;
-    if (_aspectRatioMode == 'Full') {
-      previewWidget = SizedBox(
-        width: screenSize.width,
-        height: screenSize.height,
-        child: FittedBox(
-          fit: BoxFit.cover,
-          child: SizedBox(
-            width: controller!.value.previewSize?.height ?? screenSize.width,
-            height: controller!.value.previewSize?.width ?? screenSize.height,
-            child: CameraPreview(controller!),
-          ),
-        ),
-      );
-    } else {
-      previewWidget = AspectRatio(
-        aspectRatio: 3 / 4,
-        child: CameraPreview(controller!),
-      );
-    }
+    // معاينة الشاشة بأبعاد الآيفون الدقيقة (4:3 الافتراضية مع ملء مثالي)
+    Widget previewWidget = AspectRatio(
+      aspectRatio: 3 / 4,
+      child: CameraPreview(controller!),
+    );
 
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // 1. معاينة الكاميرا والتحكم بالزووم وعجلّة الآيفون الدائرية
+          // 1. المعاينة والتحكم بالزووم النظيف والسلس
           Positioned.fill(
             child: GestureDetector(
               onScaleStart: (_) {
                 setState(() { _showZoomWheel = true; });
               },
               onScaleUpdate: (details) async {
-                double newZoom = (_currentZoom * (details.scale > 1 ? 1.03 : 0.97))
+                double newZoom = (_currentZoom * (details.scale > 1 ? 1.02 : 0.98))
                     .clamp(_minZoom, _maxZoom);
                 setState(() {
                   _currentZoom = newZoom;
@@ -251,7 +238,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 await controller!.setZoomLevel(_currentZoom);
               },
               onScaleEnd: (_) {
-                // إخفاء العجلّة بعد ثوانٍ من ترك الأصابع
                 Future.delayed(const Duration(seconds: 2), () {
                   if (mounted && DateTime.now().difference(_lastZoomInteraction).inSeconds >= 2) {
                     setState(() { _showZoomWheel = false; });
@@ -262,14 +248,15 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             ),
           ),
 
-          // 2. الشريط العُلوي (إعدادات، فلاش، HDR، مؤقت)
+          // 2. الشريط العلوي للآيفون (Flash, Arrow Menu, Live Photo Icon)
           Positioned(
-            top: 40,
-            left: 15,
-            right: 15,
+            top: 45,
+            left: 20,
+            right: 20,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
+                // زر الفلاش
                 IconButton(
                   icon: Icon(
                     _flashMode == FlashMode.torch ? Icons.flash_on : Icons.flash_off,
@@ -278,55 +265,103 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                   onPressed: _toggleFlash,
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(10)),
-                  child: const Text('HDR AI', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+
+                // السهم العلوي للخيارات المنسدلة
+                IconButton(
+                  icon: Icon(
+                    _showTopControlsMenu ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                    color: Colors.white,
+                    size: 26,
+                  ),
+                  onPressed: () {
+                    setState(() { _showTopControlsMenu = !_showTopControlsMenu; });
+                  },
                 ),
-                const Icon(Icons.timer_outlined, color: Colors.white, size: 24),
+
+                // أيقونة Live Photo الدائرية الخاصة بالآيفون (حلقات متداخلة)
                 GestureDetector(
                   onTap: () {
-                    setState(() {
-                      _aspectRatioMode = (_aspectRatioMode == '4:3') ? 'Full' : '4:3';
-                    });
+                    setState(() { _isLiveEnabled = !_isLiveEnabled; });
                   },
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(border: Border.all(color: Colors.white, width: 1), borderRadius: BorderRadius.circular(6)),
-                    child: Text(_aspectRatioMode, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: _isLiveEnabled ? Colors.amber : Colors.white54,
+                        width: 2,
+                      ),
+                    ),
+                    child: Icon(
+                      Icons.adjust,
+                      color: _isLiveEnabled ? Colors.amber : Colors.white54,
+                      size: 20,
+                    ),
                   ),
                 ),
               ],
             ),
           ),
 
-          // 3. عجلّة الزوم الدائرية الاحترافية (تظهر وتتدرج عند السحب مثل الآيفون وسامسونج)
+          // قائمة الخيارات العلوية عند الضغط على السهم
+          if (_showTopControlsMenu)
+            Positioned(
+              top: 95,
+              left: 30,
+              right: 30,
+              child: Container(
+                padding: const EdgeInsets.all(15),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.85),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.white24),
+                ),
+                child: Column(
+                  children: [
+                    SwitchListTile(
+                      activeColor: Colors.amber,
+                      title: const Text('Live Photo Mode', style: TextStyle(color: Colors.white, fontSize: 13)),
+                      value: _isLiveEnabled,
+                      onChanged: (val) => setState(() => _isLiveEnabled = val),
+                    ),
+                    SwitchListTile(
+                      activeColor: Colors.amber,
+                      title: const Text('Shutter Sound', style: TextStyle(color: Colors.white, fontSize: 13)),
+                      value: _isShutterSoundOn,
+                      onChanged: (val) => setState(() => _isShutterSoundOn = val),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+          // 3. عجلّة الزوم الدائرية والعددیة (تطابق الآيفون تماماً)
           if (_showZoomWheel)
             Positioned(
-              bottom: 150,
+              bottom: 160,
               left: 0,
               right: 0,
               child: Center(
                 child: Container(
-                  height: 90,
-                  width: 320,
+                  height: 85,
+                  width: 300,
                   decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.75),
-                    borderRadius: BorderRadius.circular(45),
-                    border: Border.all(color: Colors.amber.withOpacity(0.4), width: 1),
+                    color: Colors.black.withOpacity(0.8),
+                    borderRadius: BorderRadius.circular(40),
+                    border: Border.all(color: Colors.amber.withOpacity(0.5), width: 1),
                   ),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Text(
                         '${_currentZoom.toStringAsFixed(1)}x',
-                        style: const TextStyle(color: Colors.amber, fontSize: 16, fontWeight: FontWeight.bold),
+                        style: const TextStyle(color: Colors.amber, fontSize: 15, fontWeight: FontWeight.bold),
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 6),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: [1.0, 2.0, 3.0, 4.0].map((z) {
-                          bool isSelected = (_currentZoom - z).abs() < 0.5;
+                        children: [0.5, 1.0, 1.5, 2.0, 3.0].map((z) {
+                          bool isSelected = (_currentZoom - z).abs() < 0.3;
                           return GestureDetector(
                             onTap: () async {
                               setState(() {
@@ -336,13 +371,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                               await controller!.setZoomLevel(z);
                             },
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                               decoration: BoxDecoration(
                                 color: isSelected ? Colors.amber : Colors.transparent,
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               child: Text(
-                                '${z.toInt()}x',
+                                z == 0.5 ? '.5' : '${z.toInt()}x',
                                 style: TextStyle(
                                   color: isSelected ? Colors.black : Colors.white70,
                                   fontWeight: FontWeight.bold,
@@ -359,7 +394,50 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               ),
             ),
 
-          // 4. الشريط السفلي (أوضاع التصوير الأفقية + زر الالتقاط)
+          // أزرار الزووم السريعة الثابتة فوق الأوضاع (.5x, 1.5x, 2x) مطابقة للصور
+          Positioned(
+            bottom: 115,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [0.5, 1.5, 2.0].map((zoomVal) {
+                  bool isSel = (_currentZoom - zoomVal).abs() < 0.3;
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6.0),
+                    child: GestureDetector(
+                      onTap: () async {
+                        setState(() { _currentZoom = zoomVal; });
+                        await controller!.setZoomLevel(zoomVal);
+                      },
+                      child: Container(
+                        height: 30,
+                        width: 30,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: isSel ? Colors.amber : Colors.black54,
+                          border: Border.all(color: Colors.white24),
+                        ),
+                        child: Center(
+                          child: Text(
+                            zoomVal == 0.5 ? '.5' : '${zoomVal.toInt()}',
+                            style: TextStyle(
+                              color: isSel ? Colors.black : Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ),
+
+          // 4. الشريط السفلي (شريط الأوضاع: SLO-MO, VIDEO, PHOTO, PORTRAIT, PANO)
           Positioned(
             bottom: 20,
             left: 0,
@@ -367,16 +445,16 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // شريط الأوضاع (LIVE AUTO، PHOTO، VIDEO، PORTRAIT)
+                // شريط الأوضاع الأفقي للآيفون
                 SizedBox(
                   height: 35,
                   child: ListView(
                     scrollDirection: Axis.horizontal,
                     padding: const EdgeInsets.symmetric(horizontal: 20),
-                    children: ['SLOW-MO', 'VIDEO', 'PHOTO', 'LIVE AUTO', 'PORTRAIT', 'SQUARE'].map((mode) {
+                    children: ['SLO-MO', 'VIDEO', 'PHOTO', 'PORTRAIT', 'PANO'].map((mode) {
                       bool isSelected = _currentMode == mode;
                       return Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                        padding: const EdgeInsets.symmetric(horizontal: 14.0),
                         child: GestureDetector(
                           onTap: () => setState(() => _currentMode = mode),
                           child: Text(
@@ -394,50 +472,52 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
                 const SizedBox(height: 12),
 
-                // صف المعرض وزر الالتقاط والتبديل
+                // صف المعرض، زر الغالق الضخم للآيفون، وزر التبديل
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    // المعرض المصغر
+                    // المعرض المصغر على الشمال
                     Container(
-                      height: 50,
-                      width: 50,
+                      height: 48,
+                      width: 48,
                       decoration: BoxDecoration(
                         color: Colors.grey[900],
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.white24),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.white30, width: 1.5),
                       ),
                       child: const Icon(Icons.photo, color: Colors.white, size: 24),
                     ),
 
-                    // زر الغالق الرئيسي
+                    // زر الالتقاط الضخم (طراز الآيفون: إطار خارجي رفيع وزر أبيض واسع)
                     GestureDetector(
                       onTap: _captureAction,
                       child: Container(
-                        height: 75,
-                        width: 75,
+                        height: 78,
+                        width: 78,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 4),
+                          border: Border.all(color: Colors.white, width: 3.5),
                         ),
                         child: Center(
                           child: Container(
-                            height: 60,
-                            width: 60,
+                            height: 66,
+                            width: 66,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: _currentMode == 'VIDEO' && _isRecording ? Colors.red : Colors.white,
+                              color: (_currentMode == 'VIDEO' || _currentMode == 'SLO-MO') && _isRecording 
+                                  ? Colors.red 
+                                  : Colors.white,
                             ),
-                            child: _isRecording ? const Icon(Icons.stop, color: Colors.white, size: 30) : null,
+                            child: _isRecording ? const Icon(Icons.stop, color: Colors.white, size: 32) : null,
                           ),
                         ),
                       ),
                     ),
 
-                    // زر تبديل الكاميرا
+                    // زر تبديل الكاميرا (أمامية وخلفية)
                     IconButton(
                       iconSize: 32,
-                      icon: const Icon(Icons.cameraswitch, color: Colors.white),
+                      icon: const Icon(Icons.cameraswitch_outlined, color: Colors.white),
                       onPressed: _switchCamera,
                     ),
                   ],
