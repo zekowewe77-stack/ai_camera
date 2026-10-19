@@ -37,7 +37,7 @@ class CameraScreen extends StatefulWidget {
   State<CameraScreen> createState() => _CameraScreenState();
 }
 
-class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver {
+class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   CameraController? controller;
   int selectedCameraIndex = 0;
   bool isPermissionGranted = false;
@@ -53,16 +53,35 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   String _currentMode = 'PHOTO';
   bool _isRecording = false;
   bool _isLiveEnabled = true;
-  bool _isHdrEnabled = false;
+  bool _isHdrPlusEnabled = false;
+  bool _isTimerActive = false;
+  bool _isFilterActive = false;
   bool _showTopControlsMenu = false;
   bool _isShutterSoundOn = true;
   
   String _selectedAspectRatio = '4:3';
+  
+  // متغيرات ميزة التركيز والتحكم بالإضاءة باللمس (Tap-to-Focus & Exposure)
+  bool _showFocusBox = false;
+  Offset _focusPoint = Offset.zero;
+  double _exposureOffset = 0.0;
+  double _minAvailableExposureOffset = 0.0;
+  double _maxAvailableExposureOffset = 0.0;
+
+  late AnimationController _flashAnimController;
+  late Animation<double> _flashAnimation;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    
+    _flashAnimController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 150),
+    );
+    _flashAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(_flashAnimController);
+
     _requestPermissionAndInit();
   }
 
@@ -110,6 +129,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       _currentZoom = _minZoom;
       await controller!.setZoomLevel(_currentZoom);
       await controller!.setFlashMode(_flashMode);
+
+      _minAvailableExposureOffset = await controller!.getMinExposureOffset();
+      _maxAvailableExposureOffset = await controller!.getMaxExposureOffset();
+
       if (mounted) setState(() {});
     } catch (e) {
       print('Error initializing camera: $e');
@@ -135,6 +158,33 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
+  Future<void> _onTapToFocus(TapDownDetails details, BoxConstraints constraints) async {
+    if (controller == null || !controller!.value.isInitialized) return;
+
+    final offset = Offset(
+      details.localPosition.dx / constraints.maxWidth,
+      details.localPosition.dy / constraints.maxHeight,
+    );
+
+    setState(() {
+      _showFocusBox = true;
+      _focusPoint = details.localPosition;
+    });
+
+    try {
+      await controller!.setFocusPoint(offset);
+      await controller!.setExposurePoint(offset);
+    } catch (e) {
+      print(e);
+    }
+
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) {
+        setState(() { _showFocusBox = false; });
+      }
+    });
+  }
+
   Future<void> _captureAction() async {
     if (controller == null || !controller!.value.isInitialized) return;
 
@@ -144,7 +194,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
 
     try {
-      // تشغيل صوت ضغطة الكاميرا بوضوح تام وهزاز
+      _flashAnimController.forward().then((_) => _flashAnimController.reverse());
+      
       if (_isShutterSoundOn) {
         SystemSound.play(SystemSoundType.click);
         HapticFeedback.heavyImpact();
@@ -185,7 +236,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
+    WidgetsBinding.instance.addObserver(this);
+    _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
   }
@@ -201,319 +253,433 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     Widget previewWidget = AspectRatio(
       aspectRatio: _getAspectRatioValue(),
-      child: CameraPreview(controller!),
+      child: ColorFiltered(
+        colorFilter: _isHdrPlusEnabled
+            ? const ColorFilter.matrix(<double>[
+                1.2, 0, 0, 0, 10,
+                0, 1.2, 0, 0, 10,
+                0, 0, 1.2, 0, 10,
+                0, 0, 0, 1, 0,
+              ])
+            : (_isFilterActive
+                ? const ColorFilter.matrix(<double>[
+                    0.393, 0.769, 0.189, 0, 0,
+                    0.349, 0.686, 0.168, 0, 0,
+                    0.272, 0.534, 0.131, 0, 0,
+                    0, 0, 0, 1, 0,
+                  ])
+                : const ColorFilter.mode(Colors.transparent, BlendMode.dst)),
+        child: CameraPreview(controller!),
+      ),
     );
 
     return Scaffold(
       backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: GestureDetector(
-              onScaleStart: (_) {
-                setState(() { _showZoomWheel = true; });
-              },
-              onScaleUpdate: (details) async {
-                double newZoom = (_currentZoom * (details.scale > 1 ? 1.03 : 0.97))
-                    .clamp(_minZoom, _maxZoom);
-                setState(() {
-                  _currentZoom = newZoom;
-                  _showZoomWheel = true;
-                  _lastZoomInteraction = DateTime.now();
-                });
-                await controller!.setZoomLevel(_currentZoom);
-              },
-              onScaleEnd: (_) {
-                Future.delayed(const Duration(seconds: 2), () {
-                  if (mounted && DateTime.now().difference(_lastZoomInteraction).inSeconds >= 2) {
-                    setState(() { _showZoomWheel = false; });
-                  }
-                });
-              },
-              child: Center(child: previewWidget),
-            ),
-          ),
-
-          // الشريط العلوي المطابق لأيقونات الآيفون (فلاش، HDR، لايف، مؤقت، فلاتر)
-          Positioned(
-            top: 40,
-            left: 15,
-            right: 15,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                IconButton(
-                  icon: Icon(
-                    _flashMode == FlashMode.torch ? Icons.flash_on : Icons.flash_off,
-                    color: _flashMode == FlashMode.torch ? Colors.amber : Colors.white,
-                    size: 22,
-                  ),
-                  onPressed: _toggleFlash,
-                ),
-                GestureDetector(
-                  onTap: () {
-                    setState(() { _isHdrEnabled = !_isHdrEnabled; });
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          return Stack(
+            children: [
+              Positioned.fill(
+                child: GestureDetector(
+                  onTapDown: (details) => _onTapToFocus(details, constraints),
+                  onScaleStart: (_) {
+                    setState(() { _showZoomWheel = true; });
                   },
-                  child: Text(
-                    'HDR',
-                    style: TextStyle(
-                      color: _isHdrEnabled ? Colors.amber : Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
-                    ),
-                  ),
-                ),
-                GestureDetector(
-                  onTap: () {
-                    setState(() { _isLiveEnabled = !_isLiveEnabled; });
+                  onScaleUpdate: (details) async {
+                    double scaleFactor = details.scale > 1 ? 1.015 : 0.985;
+                    double newZoom = (_currentZoom * scaleFactor).clamp(_minZoom, _maxZoom);
+                    setState(() {
+                      _currentZoom = newZoom;
+                      _showZoomWheel = true;
+                      _lastZoomInteraction = DateTime.now();
+                    });
+                    await controller!.setZoomLevel(_currentZoom);
                   },
-                  child: Icon(
-                    Icons.adjust,
-                    color: _isLiveEnabled ? Colors.amber : Colors.white70,
-                    size: 22,
-                  ),
-                ),
-                const Icon(Icons.timer_outlined, color: Colors.white70, size: 22),
-                const Icon(Icons.filter_vintage_outlined, color: Colors.white70, size: 22),
-              ],
-            ),
-          ),
-
-          // زر السهم الصغير في المنتصف لفتح قائمة الإعدادات المتقدمة
-          Positioned(
-            top: 80,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: GestureDetector(
-                onTap: () {
-                  setState(() { _showTopControlsMenu = !_showTopControlsMenu; });
-                },
-                child: Icon(
-                  _showTopControlsMenu ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
-                  color: Colors.white,
-                  size: 26,
+                  onScaleEnd: (_) {
+                    Future.delayed(const Duration(seconds: 2), () {
+                      if (mounted && DateTime.now().difference(_lastZoomInteraction).inSeconds >= 2) {
+                        setState(() { _showZoomWheel = false; });
+                      }
+                    });
+                  },
+                  child: Center(child: previewWidget),
                 ),
               ),
-            ),
-          ),
 
-          // قائمة الإعدادات المنسدلة (صوت الضغطة وأبعاد الصورة)
-          if (_showTopControlsMenu)
-            Positioned(
-              top: 115,
-              left: 25,
-              right: 25,
-              child: Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.9),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.amber.withOpacity(0.4)),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SwitchListTile(
-                      activeColor: Colors.amber,
-                      title: const Text('صوت ضغطة الكاميرا (Shutter)', style: TextStyle(color: Colors.white, fontSize: 13)),
-                      value: _isShutterSoundOn,
-                      onChanged: (val) => setState(() => _isShutterSoundOn = val),
-                    ),
-                    const Divider(color: Colors.white24),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text('أبعاد الإطار:', style: TextStyle(color: Colors.white, fontSize: 13)),
-                        DropdownButton<String>(
-                          dropdownColor: Colors.grey[900],
-                          value: _selectedAspectRatio,
-                          items: ['4:3', '16:9', '1:1', 'Full'].map((ratio) {
-                            return DropdownMenuItem(
-                              value: ratio,
-                              child: Text(ratio, style: const TextStyle(color: Colors.amber, fontSize: 13)),
-                            );
-                          }).toList(),
-                          onChanged: (val) {
-                            if (val != null) setState(() => _selectedAspectRatio = val);
-                          },
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
-          // عجلة الزووم الدائرية
-          if (_showZoomWheel)
-            Positioned(
-              bottom: 180,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: Container(
-                  height: 70,
-                  width: 270,
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.85),
-                    borderRadius: BorderRadius.circular(30),
-                    border: Border.all(color: Colors.amber.withOpacity(0.6), width: 1.2),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
+              // دايرة التركيز ومؤشر الإضاءة الأخضر (Tap-to-Focus & Exposure Slider)
+              if (_showFocusBox)
+                Positioned(
+                  left: _focusPoint.dx - 40,
+                  top: _focusPoint.dy - 40,
+                  child: Row(
                     children: [
-                      Text(
-                        '${_currentZoom.toStringAsFixed(1)}x',
-                        style: const TextStyle(color: Colors.amber, fontSize: 13, fontWeight: FontWeight.bold),
+                      Container(
+                        height: 80,
+                        width: 80,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.greenAccent, width: 1.5),
+                        ),
                       ),
-                      Slider(
-                        value: _currentZoom,
-                        min: _minZoom,
-                        max: _maxZoom,
-                        activeColor: Colors.amber,
-                        inactiveColor: Colors.white24,
-                        onChanged: (val) async {
-                          setState(() {
-                            _currentZoom = val;
-                            _lastZoomInteraction = DateTime.now();
-                          });
-                          await controller!.setZoomLevel(val);
-                        },
+                      const SizedBox(width: 10),
+                      SizedBox(
+                        height: 100,
+                        child: RotatedBox(
+                          quarterTurns: 3,
+                          child: Slider(
+                            value: _exposureOffset,
+                            min: _minAvailableExposureOffset,
+                            max: _maxAvailableExposureOffset,
+                            activeColor: Colors.greenAccent,
+                            inactiveColor: Colors.white24,
+                            onChanged: (val) async {
+                              setState(() { _exposureOffset = val; });
+                              await controller!.setExposureOffset(val);
+                            },
+                          ),
+                        ),
                       ),
                     ],
                   ),
                 ),
-              ),
-            ),
 
-          // أزرار التكبير الثابتة المرفوعة للأعلى بعيداً عن حافة التليفون
-          Positioned(
-            bottom: 140,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [_minZoom, 1.0, 2.0].where((z) => z >= _minZoom && z <= _maxZoom).map((zoomVal) {
-                  bool isSel = (_currentZoom - zoomVal).abs() < 0.3;
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 5.0),
-                    child: GestureDetector(
-                      onTap: () async {
-                        setState(() { _currentZoom = zoomVal; });
-                        await controller!.setZoomLevel(zoomVal);
+              // تأثير ومضة الالتقاط
+              AnimatedBuilder(
+                animation: _flashAnimation,
+                builder: (context, child) {
+                  return IgnorePointer(
+                    child: Container(
+                      color: Colors.white.withOpacity(_flashAnimation.value),
+                    ),
+                  );
+                },
+              ),
+
+              // الشريط العلوي (فلاش، HDR+, Live Photo، المؤقت، الفلاتر)
+              Positioned(
+                top: 40,
+                left: 15,
+                right: 15,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    IconButton(
+                      icon: Icon(
+                        _flashMode == FlashMode.torch ? Icons.flash_on : Icons.flash_off,
+                        color: _flashMode == FlashMode.torch ? Colors.amber : Colors.white,
+                        size: 22,
+                      ),
+                      onPressed: _toggleFlash,
+                    ),
+                    GestureDetector(
+                      onTap: () {
+                        setState(() { _isHdrPlusEnabled = !_isHdrPlusEnabled; });
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(_isHdrPlusEnabled ? '⚡ HDR+: ON (Enhanced)' : 'HDR+: OFF'),
+                            duration: const Duration(milliseconds: 500),
+                            backgroundColor: Colors.amber[800],
+                          ),
+                        );
                       },
-                      child: Container(
-                        height: 30,
-                        width: 35,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(15),
-                          color: isSel ? Colors.amber : Colors.black54,
-                          border: Border.all(color: Colors.white24),
+                      child: Text(
+                        'HDR+',
+                        style: TextStyle(
+                          color: _isHdrPlusEnabled ? Colors.amber : Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
                         ),
-                        child: Center(
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: () {
+                        setState(() { _isLiveEnabled = !_isLiveEnabled; });
+                      },
+                      child: Icon(
+                        Icons.adjust,
+                        color: _isLiveEnabled ? Colors.amber : Colors.white70,
+                        size: 22,
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: () {
+                        setState(() { _isTimerActive = !_isTimerActive; });
+                      },
+                      child: Icon(
+                        Icons.timer_outlined,
+                        color: _isTimerActive ? Colors.amber : Colors.white70,
+                        size: 22,
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: () {
+                        setState(() { _isFilterActive = !_isFilterActive; });
+                      },
+                      child: Icon(
+                        Icons.filter_vintage_outlined,
+                        color: _isFilterActive ? Colors.amber : Colors.white70,
+                        size: 22,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // سهم القائمة المنسدلة
+              Positioned(
+                top: 78,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: GestureDetector(
+                    onTap: () {
+                      setState(() { _showTopControlsMenu = !_showTopControlsMenu; });
+                    },
+                    child: Icon(
+                      _showTopControlsMenu ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                      color: Colors.white,
+                      size: 26,
+                    ),
+                  ),
+                ),
+              ),
+
+              // قائمة الإعدادات المنسدلة
+              if (_showTopControlsMenu)
+                Positioned(
+                  top: 110,
+                  left: 25,
+                  right: 25,
+                  child: Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.9),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.amber.withOpacity(0.4)),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SwitchListTile(
+                          activeColor: Colors.amber,
+                          title: const Text('صوت ضغطة الكاميرا (Shutter)', style: TextStyle(color: Colors.white, fontSize: 13)),
+                          value: _isShutterSoundOn,
+                          onChanged: (val) => setState(() => _isShutterSoundOn = val),
+                        ),
+                        const Divider(color: Colors.white24),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('أبعاد الإطار:', style: TextStyle(color: Colors.white, fontSize: 13)),
+                            DropdownButton<String>(
+                              dropdownColor: Colors.grey[900],
+                              value: _selectedAspectRatio,
+                              items: ['4:3', '16:9', '1:1', 'Full'].map((ratio) {
+                                return DropdownMenuItem(
+                                  value: ratio,
+                                  child: Text(ratio, style: const TextStyle(color: Colors.amber, fontSize: 13)),
+                                );
+                              }).toList(),
+                              onChanged: (val) {
+                                if (val != null) setState(() => _selectedAspectRatio = val);
+                              },
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+              // عجلة الزووم الدائرية
+              if (_showZoomWheel)
+                Positioned(
+                  bottom: 210,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: Container(
+                      height: 70,
+                      width: 270,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.85),
+                        borderRadius: BorderRadius.circular(30),
+                        border: Border.all(color: Colors.amber.withOpacity(0.6), width: 1.2),
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            '${_currentZoom.toStringAsFixed(1)}x',
+                            style: const TextStyle(color: Colors.amber, fontSize: 13, fontWeight: FontWeight.bold),
+                          ),
+                          Slider(
+                            value: _currentZoom,
+                            min: _minZoom,
+                            max: _maxZoom,
+                            activeColor: Colors.amber,
+                            inactiveColor: Colors.white24,
+                            onChanged: (val) async {
+                              setState(() {
+                                _currentZoom = val;
+                                _lastZoomInteraction = DateTime.now();
+                              });
+                              await controller!.setZoomLevel(val);
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
+              // أزرار التكبير الثابتة
+              Positioned(
+                bottom: 170,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      GestureDetector(
+                        onTap: () async {
+                          setState(() { _currentZoom = _minZoom; });
+                          await controller!.setZoomLevel(_minZoom);
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                          margin: const EdgeInsets.symmetric(horizontal: 4),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(15),
+                            color: (_currentZoom - _minZoom).abs() < 0.3 ? Colors.amber : Colors.black54,
+                            border: Border.all(color: Colors.white24),
+                          ),
                           child: Text(
-                            '${zoomVal.toStringAsFixed(0)}x',
+                            _minZoom < 1.0 ? '.5x' : '1x',
                             style: TextStyle(
-                              color: isSel ? Colors.black : Colors.white,
+                              color: (_currentZoom - _minZoom).abs() < 0.3 ? Colors.black : Colors.white,
                               fontSize: 11,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
                         ),
                       ),
-                    ),
-                  );
-                }).toList(),
-              ),
-            ),
-          ),
-
-          // الشريط السفلي (مرفوع تماماً بعيداً عن أزرار التنقل السفلية للشاشة)
-          Positioned(
-            bottom: 35,
-            left: 0,
-            right: 0,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SizedBox(
-                  height: 30,
-                  child: ListView(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    children: ['SLO-MO', 'VIDEO', 'PHOTO', 'PORTRAIT', 'PANO'].map((mode) {
-                      bool isSelected = _currentMode == mode;
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 14.0),
-                        child: GestureDetector(
-                          onTap: () => setState(() => _currentMode = mode),
-                          child: Text(
-                            mode,
+                      GestureDetector(
+                        onTap: () async {
+                          double targetZoom = _maxZoom >= 2.0 ? 2.0 : _maxZoom;
+                          setState(() { _currentZoom = targetZoom; });
+                          await controller!.setZoomLevel(targetZoom);
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                          margin: const EdgeInsets.symmetric(horizontal: 4),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(15),
+                            color: (_currentZoom - 2.0).abs() < 0.3 ? Colors.amber : Colors.black54,
+                            border: Border.all(color: Colors.white24),
+                          ),
+                          child: const Text(
+                            '2x',
                             style: TextStyle(
-                              color: isSelected ? Colors.amber : Colors.white60,
+                              color: Colors.white,
+                              fontSize: 11,
                               fontWeight: FontWeight.bold,
-                              fontSize: 13,
                             ),
                           ),
                         ),
-                      );
-                    }).toList(),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 10),
+              ),
 
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              // الشريط السفلي
+              Positioned(
+                bottom: 40,
+                left: 0,
+                right: 0,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Container(
-                      height: 48,
-                      width: 48,
-                      decoration: BoxDecoration(
-                        color: Colors.grey[900],
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.white30, width: 1.5),
+                    SizedBox(
+                      height: 30,
+                      child: ListView(
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        children: ['SLO-MO', 'VIDEO', 'PHOTO', 'PORTRAIT', 'PANO'].map((mode) {
+                          bool isSelected = _currentMode == mode;
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 14.0),
+                            child: GestureDetector(
+                              onTap: () => setState(() => _currentMode = mode),
+                              child: Text(
+                                mode,
+                                style: TextStyle(
+                                  color: isSelected ? Colors.amber : Colors.white60,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                          );
+                        }).toList(),
                       ),
-                      child: const Icon(Icons.photo, color: Colors.white, size: 24),
                     ),
+                    const SizedBox(height: 12),
 
-                    GestureDetector(
-                      onTap: _captureAction,
-                      child: Container(
-                        height: 75,
-                        width: 75,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 3.5),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        Container(
+                          height: 48,
+                          width: 48,
+                          decoration: BoxDecoration(
+                            color: Colors.grey[900],
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.white30, width: 1.5),
+                          ),
+                          child: const Icon(Icons.photo, color: Colors.white, size: 24),
                         ),
-                        child: Center(
+
+                        GestureDetector(
+                          onTap: _captureAction,
                           child: Container(
-                            height: 63,
-                            width: 63,
+                            height: 75,
+                            width: 75,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: (_currentMode == 'VIDEO' || _currentMode == 'SLO-MO') && _isRecording 
-                                  ? Colors.red 
-                                  : Colors.white,
+                              border: Border.all(color: Colors.white, width: 3.5),
                             ),
-                            child: _isRecording ? const Icon(Icons.stop, color: Colors.white, size: 30) : null,
+                            child: Center(
+                              child: Container(
+                                height: 63,
+                                width: 63,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: (_currentMode == 'VIDEO' || _currentMode == 'SLO-MO') && _isRecording 
+                                      ? Colors.red 
+                                      : Colors.white,
+                                ),
+                                child: _isRecording ? const Icon(Icons.stop, color: Colors.white, size: 30) : null,
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                    ),
 
-                    IconButton(
-                      iconSize: 30,
-                      icon: const Icon(Icons.cameraswitch_outlined, color: Colors.white),
-                      onPressed: _switchCamera,
+                        IconButton(
+                          iconSize: 30,
+                          icon: const Icon(Icons.cameraswitch_outlined, color: Colors.white),
+                          onPressed: _switchCamera,
+                        ),
+                      ],
                     ),
                   ],
                 ),
-              ],
-            ),
-          ),
-        ],
+              ),
+            ],
+          );
+        },
       ),
     );
   }
