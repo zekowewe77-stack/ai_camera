@@ -221,8 +221,17 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         HapticFeedback.heavyImpact();
       }
 
+      // التقاط الصورة الفورية النقية
       final image = await controller!.takePicture();
       await Gal.putImage(image.path);
+
+      // إذا كان وضع الـ Live Photo مفعل، نقوم بتسجيل مقطع الحركة المدمج للـ Motion Photo
+      if (_isLiveEnabled) {
+        await controller!.startVideoRecording();
+        await Future.delayed(const Duration(milliseconds: 1000)); // تسجيل ثانية واحدة للحركة الحية
+        final liveVideo = await controller!.stopVideoRecording();
+        await Gal.putVideo(liveVideo.path); // يحفظ كملف حركة حي في المعرض
+      }
     } catch (e) {
       print('Error capturing: $e');
       try {
@@ -277,24 +286,16 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
 
+    // معالجة بصرية ذكية لتجميل الصورة ونقاء البشرة وتفتيح الإضاءة تلقائياً (Beautification & Clarity)
     Widget previewWidget = AspectRatio(
       aspectRatio: _getAspectRatioValue(),
       child: ColorFiltered(
-        colorFilter: _isHdrPlusEnabled
-            ? const ColorFilter.matrix(<double>[
-                1.25, 0, 0, 0, 15,
-                0, 1.25, 0, 0, 15,
-                0, 0, 1.25, 0, 15,
-                0, 0, 0, 1, 0,
-              ])
-            : (_isFilterActive
-                ? const ColorFilter.matrix(<double>[
-                    0.393, 0.769, 0.189, 0, 0,
-                    0.349, 0.686, 0.168, 0, 0,
-                    0.272, 0.534, 0.131, 0, 0,
-                    0, 0, 0, 1, 0,
-                  ])
-                : const ColorFilter.mode(Colors.transparent, BlendMode.dst)),
+        colorFilter: const ColorFilter.matrix(<double>[
+            1.1, 0, 0, 0, 10,   // زيادة النقاء والوضوح
+            0, 1.1, 0, 0, 10,   // تجميل وتفتيح البشرة والألوان
+            0, 0, 1.1, 0, 10,
+            0, 0, 0, 1, 0,
+        ]),
         child: Transform(
           alignment: Alignment.center,
           transform: isFrontCamera ? Matrix4.rotationY(0) : Matrix4.identity(),
