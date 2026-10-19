@@ -54,7 +54,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   String _currentMode = 'PHOTO';
   bool _isRecording = false;
-  bool _isLiveEnabled = true; // Live Photo افتراضياً مفعلة
+  bool _isLiveEnabled = true;
   bool _isHdrPlusEnabled = false;
   bool _isTimerActive = false;
   bool _isFilterActive = false;
@@ -89,7 +89,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     _requestPermissionAndInit();
   }
 
-  // حفظ واسترجاع الإعدادات عند الخروج والعودة
   Future<void> _loadPreferences() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
@@ -153,7 +152,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       
       _currentZoom = _minZoom;
       await controller!.setZoomLevel(_currentZoom);
-      await controller!.setFlashMode(FlashMode.off); // الفلاش يبدأ مطفأ عند الفتح دائماً
+      await controller!.setFlashMode(FlashMode.off);
 
       _minAvailableExposureOffset = await controller!.getMinExposureOffset();
       _maxAvailableExposureOffset = await controller!.getMaxExposureOffset();
@@ -245,13 +244,11 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       }
 
       if (_isLiveEnabled) {
-        // آلية الصورة المتحركة (Live Motion Photo): تسجيل مقطع فيديو قصير قبل وبعد الضغط ليعمل كفيديو متحرك لتيك توك
         await controller!.startVideoRecording();
-        await Future.delayed(const Duration(milliseconds: 1200)); // تسجيل ثانية وربع للحركة قبل/أثناء الالتقاط
+        await Future.delayed(const Duration(milliseconds: 1200));
         final motionVideo = await controller!.stopVideoRecording();
-        await Gal.putVideo(motionVideo.path); // حفظ الفيديو المتحركة في المعرض
+        await Gal.putVideo(motionVideo.path);
       } else {
-        // التقاط صورة ثابتة عادية
         final image = await controller!.takePicture();
         await Gal.putImage(image.path);
       }
@@ -292,7 +289,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   @override
   void dispose() {
-    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.removeObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
@@ -370,7 +367,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
-              // دايرة التركيز ومؤشر الإضاءة الخضراء
               if (_showFocusBox)
                 Positioned(
                   left: _focusPoint.dx - 35,
@@ -410,7 +406,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                 ),
 
-              // تأثير ومضة الالتقاط البيضاء
               AnimatedBuilder(
                 animation: _flashAnimation,
                 builder: (context, child) {
@@ -422,7 +417,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 },
               ),
 
-              // الشريط العلوي
               Positioned(
                 top: 40,
                 left: 15,
@@ -452,7 +446,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                         ),
                       ),
                     ),
-                    // أيقونة الصورة المتحركة (Live Photo) مع الشرطة والمقاطعة تماماً زي الصورة اللي بعتها
                     GestureDetector(
                       onTap: () {
                         setState(() { _isLiveEnabled = !_isLiveEnabled; });
@@ -468,7 +461,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                           ),
                           if (!_isLiveEnabled)
                             Transform.rotate(
-                              angle: -0.785, // زاوية ميل الشرطة القاطعة
+                              angle: -0.785,
                               child: Container(
                                 width: 26,
                                 height: 2,
@@ -503,7 +496,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
-              // سهم القائمة المنسدلة
               Positioned(
                 top: 78,
                 left: 0,
@@ -522,7 +514,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
-              // قائمة الإعدادات المنسدلة
               if (_showTopControlsMenu)
                 Positioned(
                   top: 110,
@@ -575,7 +566,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                 ),
 
-              // عجلة الزووم الدائرية
               if (_showZoomWheel)
                 Positioned(
                   bottom: 235,
@@ -617,7 +607,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                 ),
 
-              // أزرار التكبير الثابتة
               Positioned(
                 bottom: 195,
                 left: 0,
@@ -678,7 +667,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
-              // الشريط السفلي
               Positioned(
                 bottom: 60,
                 left: 0,
