@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:gal/gal.dart';
+import 'package:open_file/open_file.dart';
 import 'dart:io';
 
 List<CameraDescription> cameras = [];
@@ -61,14 +62,18 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _isShutterSoundOn = true;
   
   String _selectedAspectRatio = '4:3';
+  String _selectedVideoQuality = '1080p (30fps)'; // جودة الفيديو الافتراضية
   
-  // متغيرات التركيز والتحكم بالإضاءة بالسحب الفوري
+  String? _lastCapturedImagePath;
+
+  // متغيرات التركيز والإضاءة بالسحب الرأسي
   bool _showFocusBox = false;
   Offset _focusPoint = Offset.zero;
   double _exposureOffset = 0.0;
   double _minAvailableExposureOffset = 0.0;
   double _maxAvailableExposureOffset = 0.0;
   double _dragStartY = 0.0;
+  DateTime _lastFocusInteraction = DateTime.now();
 
   late AnimationController _flashAnimController;
   late Animation<double> _flashAnimation;
@@ -138,7 +143,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
       if (mounted) setState(() {});
     } catch (e) {
-      print('Error initializing cameras: $e');
+      print('Error initializing camera: $e');
     }
   }
 
@@ -172,6 +177,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     setState(() {
       _showFocusBox = true;
       _focusPoint = details.localPosition;
+      _lastFocusInteraction = DateTime.now();
     });
 
     try {
@@ -180,6 +186,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     } catch (e) {
       print(e);
     }
+
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted && DateTime.now().difference(_lastFocusInteraction).inSeconds >= 3) {
+        setState(() { _showFocusBox = false; });
+      }
+    });
   }
 
   void _onVerticalDragStart(DragStartDetails details) {
@@ -189,13 +201,14 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   void _onVerticalDragUpdate(DragUpdateDetails details) async {
     if (controller == null || !controller!.value.isInitialized) return;
     double delta = _dragStartY - details.localPosition.dy;
-    double sensitivity = 150.0;
+    double sensitivity = 120.0;
     double newOffset = (_exposureOffset + (delta / sensitivity) * (_maxAvailableExposureOffset - _minAvailableExposureOffset))
         .clamp(_minAvailableExposureOffset, _maxAvailableExposureOffset);
 
     setState(() {
       _exposureOffset = newOffset;
       _dragStartY = details.localPosition.dy;
+      _lastFocusInteraction = DateTime.now();
     });
 
     try {
@@ -221,14 +234,38 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         HapticFeedback.heavyImpact();
       }
 
+      if (_flashMode == FlashMode.torch) {
+        await Future.delayed(const Duration(milliseconds: 250));
+      }
+
       final image = await controller!.takePicture();
-      await Gal.putImage(image.path);
+      File imgFile = File(image.path);
+      await Gal.putImage(imgFile.path);
+
+      setState(() {
+        _lastCapturedImagePath = imgFile.path;
+      });
     } catch (e) {
       print('Error capturing: $e');
       try {
         final image = await controller!.takePicture();
         await Gal.putImage(image.path);
+        setState(() {
+          _lastCapturedImagePath = image.path;
+        });
       } catch (_) {}
+    }
+  }
+
+  Future<void> _openGallery() async {
+    if (_lastCapturedImagePath != null && await File(_lastCapturedImagePath!).exists()) {
+      OpenFile.open(_lastCapturedImagePath!);
+    } else {
+      try {
+        await Gal.open();
+      } catch (e) {
+        print('Could not open gallery: $e');
+      }
     }
   }
 
@@ -260,7 +297,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
+    WidgetsBinding.instance.addObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
@@ -297,7 +334,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 : const ColorFilter.mode(Colors.transparent, BlendMode.dst)),
         child: Transform(
           alignment: Alignment.center,
-          // تصحيح انعكاس الكاميرا الأمامية لتطابق الكاميرا الأصلية بدقة
           transform: isFrontCamera ? Matrix4.rotationY(0) : Matrix4.identity(),
           child: CameraPreview(controller!),
         ),
@@ -344,38 +380,16 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 Positioned(
                   left: _focusPoint.dx - 35,
                   top: _focusPoint.dy - 35,
-                  child: Row(
-                    children: [
-                      Container(
-                        height: 70,
-                        width: 70,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.greenAccent, width: 1.5),
-                        ),
-                        child: const Center(
-                          child: Icon(Icons.wb_sunny_outlined, color: Colors.greenAccent, size: 20),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      SizedBox(
-                        height: 90,
-                        child: RotatedBox(
-                          quarterTurns: 3,
-                          child: Slider(
-                            value: _exposureOffset,
-                            min: _minAvailableExposureOffset,
-                            max: _maxAvailableExposureOffset,
-                            activeColor: Colors.greenAccent,
-                            inactiveColor: Colors.white24,
-                            onChanged: (val) async {
-                              setState(() { _exposureOffset = val; });
-                              await controller!.setExposureOffset(val);
-                            },
-                          ),
-                        ),
-                      ),
-                    ],
+                  child: Container(
+                    height: 70,
+                    width: 70,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.greenAccent, width: 1.5),
+                    ),
+                    child: const Center(
+                      child: Icon(Icons.wb_sunny_outlined, color: Colors.greenAccent, size: 20),
+                    ),
                   ),
                 ),
 
@@ -391,7 +405,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 },
               ),
 
-              // الشريط العلوي
+              // الشريط العلوي (يتم تخصيصه تلقائياً حسب وضع الكاميرا PHOTO أو VIDEO)
               Positioned(
                 top: 40,
                 left: 15,
@@ -407,81 +421,92 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                       ),
                       onPressed: _toggleFlash,
                     ),
-                    GestureDetector(
-                      onTap: () {
-                        setState(() { _isHdrPlusEnabled = !_isHdrPlusEnabled; });
-                      },
-                      child: Text(
-                        'HDR+',
-                        style: TextStyle(
-                          color: _isHdrPlusEnabled ? Colors.amber : Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 13,
+                    if (_currentMode == 'PHOTO') ...[
+                      GestureDetector(
+                        onTap: () {
+                          setState(() { _isHdrPlusEnabled = !_isHdrPlusEnabled; });
+                        },
+                        child: Text(
+                          'HDR+',
+                          style: TextStyle(
+                            color: _isHdrPlusEnabled ? Colors.amber : Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
                         ),
                       ),
-                    ),
-                    GestureDetector(
-                      onTap: () {
-                        setState(() { _isLiveEnabled = !_isLiveEnabled; });
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(_isLiveEnabled ? '✨ Live Motion Photo: ON' : 'Live Photo: OFF'),
-                            duration: const Duration(milliseconds: 500),
-                            backgroundColor: Colors.amber[800],
-                          ),
-                        );
-                      },
-                      child: Icon(
-                        Icons.adjust,
-                        color: _isLiveEnabled ? Colors.amber : Colors.white70,
-                        size: 22,
+                      GestureDetector(
+                        onTap: () {
+                          setState(() { _isLiveEnabled = !_isLiveEnabled; });
+                        },
+                        child: Icon(
+                          Icons.adjust,
+                          color: _isLiveEnabled ? Colors.amber : Colors.white70,
+                          size: 22,
+                        ),
                       ),
-                    ),
-                    GestureDetector(
-                      onTap: () {
-                        setState(() { _isTimerActive = !_isTimerActive; });
-                      },
-                      child: Icon(
-                        Icons.timer_outlined,
-                        color: _isTimerActive ? Colors.amber : Colors.white70,
-                        size: 22,
+                      GestureDetector(
+                        onTap: () {
+                          setState(() { _isTimerActive = !_isTimerActive; });
+                        },
+                        child: Icon(
+                          Icons.timer_outlined,
+                          color: _isTimerActive ? Colors.amber : Colors.white70,
+                          size: 22,
+                        ),
                       ),
-                    ),
-                    GestureDetector(
-                      onTap: () {
-                        setState(() { _isFilterActive = !_isFilterActive; });
-                      },
-                      child: Icon(
-                        Icons.filter_vintage_outlined,
-                        color: _isFilterActive ? Colors.amber : Colors.white70,
-                        size: 22,
+                      GestureDetector(
+                        onTap: () {
+                          setState(() { _isFilterActive = !_isFilterActive; });
+                        },
+                        child: Icon(
+                          Icons.filter_vintage_outlined,
+                          color: _isFilterActive ? Colors.amber : Colors.white70,
+                          size: 22,
+                        ),
                       ),
-                    ),
+                    ] else ...[
+                      // اختيارات دقة الفيديو في وضع الفيديو
+                      DropdownButton<String>(
+                        dropdownColor: Colors.grey[900],
+                        value: _selectedVideoQuality,
+                        items: ['720p (30fps)', '1080p (30fps)', '2K (30fps)', '4K (30fps)'].map((quality) {
+                          return DropdownMenuItem(
+                            value: quality,
+                            child: Text(quality, style: const TextStyle(color: Colors.amber, fontSize: 13)),
+                          );
+                        }).toList(),
+                        onChanged: (val) {
+                          if (val != null) setState(() => _selectedVideoQuality = val);
+                        },
+                      ),
+                    ],
                   ],
                 ),
               ),
 
-              // سهم القائمة المنسدلة
-              Positioned(
-                top: 78,
-                left: 0,
-                right: 0,
-                child: Center(
-                  child: GestureDetector(
-                    onTap: () {
-                      setState(() { _showTopControlsMenu = !_showTopControlsMenu; });
-                    },
-                    child: Icon(
-                      _showTopControlsMenu ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
-                      color: Colors.white,
-                      size: 26,
+              // سهم القائمة المنسدلة (في وضع PHOTO فقط)
+              if (_currentMode == 'PHOTO')
+                Positioned(
+                  top: 78,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: GestureDetector(
+                      onTap: () {
+                        setState(() { _showTopControlsMenu = !_showTopControlsMenu; });
+                      },
+                      child: Icon(
+                        _showTopControlsMenu ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                        color: Colors.white,
+                        size: 26,
+                      ),
                     ),
                   ),
                 ),
-              ),
 
               // قائمة الإعدادات المنسدلة
-              if (_showTopControlsMenu)
+              if (_showTopControlsMenu && _currentMode == 'PHOTO')
                 Positioned(
                   top: 110,
                   left: 25,
@@ -630,7 +655,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
-              // الشريط السفلي
+              // الشريط السفلي (الأوضاع + زر التسجيل الأحمر في وضع الفيديو)
               Positioned(
                 bottom: 60,
                 left: 0,
@@ -667,17 +692,30 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
-                        Container(
-                          height: 48,
-                          width: 48,
-                          decoration: BoxDecoration(
-                            color: Colors.grey[900],
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.white30, width: 1.5),
+                        // معاينة المعرض
+                        GestureDetector(
+                          onTap: _openGallery,
+                          child: Container(
+                            height: 48,
+                            width: 48,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[900],
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.white30, width: 1.5),
+                              image: _lastCapturedImagePath != null
+                                  ? DecorationImage(
+                                      image: FileImage(File(_lastCapturedImagePath!)),
+                                      fit: BoxFit.cover,
+                                    )
+                                  : null,
+                            ),
+                            child: _lastCapturedImagePath == null
+                                ? const Icon(Icons.photo, color: Colors.white, size: 24)
+                                : null,
                           ),
-                          child: const Icon(Icons.photo, color: Colors.white, size: 24),
                         ),
 
+                        // زر الالتقاط (يتحول للون الأحمر في وضع الفيديو)
                         GestureDetector(
                           onTap: _captureAction,
                           child: Container(
@@ -693,7 +731,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                                 width: 63,
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
-                                  color: (_currentMode == 'VIDEO' || _currentMode == 'SLO-MO') && _isRecording 
+                                  color: (_currentMode == 'VIDEO' || _currentMode == 'SLO-MO') 
                                       ? Colors.red 
                                       : Colors.white,
                                 ),
