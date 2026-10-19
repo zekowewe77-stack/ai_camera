@@ -1,247 +1,402 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:gal/gal.dart';
 
-List<CameraDescription> _cameras = [];
+List<CameraDescription> cameras = [];
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // طلب صلاحيات الكاميرا والميكروفون
-  await Permission.camera.request();
-  await Permission.microphone.request();
-
   try {
-    // اكتشاف كل العدسات المتوفرة في الموبايل
-    _cameras = await availableCameras();
+    cameras = await availableCameras();
   } catch (e) {
-    debugPrint('خطأ في استشعار الكاميرات: $e');
+    print('Error initializing cameras: $e');
   }
-
-  runApp(const CameraAIApp());
+  runApp(const CameraApp());
 }
 
-class CameraAIApp extends StatelessWidget {
-  const CameraAIApp({super.key});
+class CameraApp extends StatelessWidget {
+  const CameraApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Camera AI',
+      title: 'AI Camera Pro',
       theme: ThemeData.dark(),
-      home: const CameraHomeScreen(),
+      home: const CameraScreen(),
     );
   }
 }
 
-class CameraHomeScreen extends StatefulWidget {
-  const CameraHomeScreen({super.key});
+class CameraScreen extends StatefulWidget {
+  const CameraScreen({super.key});
 
   @override
-  State<CameraHomeScreen> createState() => _CameraHomeScreenState();
+  State<CameraScreen> createState() => _CameraScreenState();
 }
 
-class _CameraHomeScreenState extends State<CameraHomeScreen> {
-  CameraController? _controller;
-  bool _isInitialized = false;
-  int _selectedCameraIndex = 0;
+class _CameraScreenState extends State<CameraScreen> {
+  CameraController? controller;
+  int selectedCameraIndex = 0;
+  bool isPermissionGranted = false;
   
-  // حالة زر Live Photo
-  bool _isLiveAutoOn = true;
+  // الخصائص
+  FlashMode _flashMode = FlashMode.off;
+  double _currentZoom = 1.0;
+  double _maxZoom = 1.0;
+  double _minZoom = 1.0;
+  String _aspectRatioMode = 'Full';
+  bool _isRecording = false;
 
   @override
   void initState() {
     super.initState();
-    if (_cameras.isNotEmpty) {
-      _initCamera(_selectedCameraIndex);
+    _requestPermissionAndInit();
+  }
+
+  Future<void> _requestPermissionAndInit() async {
+    await Permission.camera.request();
+    await Permission.microphone.request(); // لتسجيل الفيديو الصوتي
+    await Permission.storage.request();
+    await Gal.requestAccess();
+
+    if (await Permission.camera.isGranted) {
+      setState(() {
+        isPermissionGranted = true;
+      });
+      if (cameras.isNotEmpty) {
+        _initCamera(selectedCameraIndex);
+      }
     }
   }
 
-  Future<void> _initCamera(int cameraIndex) async {
-    setState(() {
-      _isInitialized = false;
-    });
-
-    _controller = CameraController(
-      _cameras[cameraIndex],
-      ResolutionPreset.max, // تفعيل أقصى دقة للمستشعر (50MP+)
+  Future<void> _initCamera(int index) async {
+    if (controller != null) {
+      await controller!.dispose();
+    }
+    // استخدام أعلى إعدادات (أقصى قدرة معالجة وصورة AI مبهرة)
+    controller = CameraController(
+      cameras[index],
+      ResolutionPreset.max,
       enableAudio: true,
     );
 
     try {
-      await _controller!.initialize();
-      if (mounted) {
-        setState(() {
-          _isInitialized = true;
-        });
-      }
+      await controller!.initialize();
+      _maxZoom = await controller!.getMaxZoomLevel();
+      _minZoom = await controller!.getMinZoomLevel();
+      await controller!.setFlashMode(_flashMode);
+      if (mounted) setState(() {});
     } catch (e) {
-      debugPrint('خطأ في تهيئة الكاميرا: $e');
+      print('Error initializing camera controller: $e');
     }
   }
 
-  void _toggleCamera() {
-    if (_cameras.length > 1) {
-      _selectedCameraIndex = (_selectedCameraIndex + 1) % _cameras.length;
-      _initCamera(_selectedCameraIndex);
+  void _switchCamera() {
+    if (cameras.length > 1) {
+      selectedCameraIndex = (selectedCameraIndex + 1) % cameras.length;
+      _initCamera(selectedCameraIndex);
+    }
+  }
+
+  Future<void> _toggleFlash() async {
+    if (controller == null) return;
+    setState(() {
+      _flashMode = (_flashMode == FlashMode.off) ? FlashMode.torch : FlashMode.off;
+    });
+    try {
+      await controller!.setFlashMode(_flashMode);
+    } catch (e) {
+      print('Flash not supported on this camera: $e');
+    }
+  }
+
+  // التقاط صورة بجودة AI عالية والحفظ في المعرض
+  Future<void> _takePicture() async {
+    if (controller == null || !controller!.value.isInitialized) return;
+    try {
+      final image = await controller!.takePicture();
+      await Gal.putImage(image.path);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تم التقاط وحفظ صورة AI الاحترافية بنجاح! ✨📸'),
+            backgroundColor: Colors.amber,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      print('Error taking picture: $e');
+    }
+  }
+
+  // تسجيل الفيديو
+  Future<void> _toggleVideoRecording() async {
+    if (controller == null || !controller!.value.isInitialized) return;
+
+    if (_isRecording) {
+      try {
+        final file = await controller!.stopVideoRecording();
+        setState(() { _isRecording = false; });
+        await Gal.putVideo(file.path);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('تم حفظ الفيديو في المعرض بنجاح! 🎥'), backgroundColor: Colors.green),
+          );
+        }
+      } catch (e) {
+        print(e);
+      }
+    } else {
+      try {
+        await controller!.startVideoRecording();
+        setState(() { _isRecording = true; });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('جاري تسجيل الفيديو... 🔴'), backgroundColor: Colors.red),
+          );
+        }
+      } catch (e) {
+        print(e);
+      }
     }
   }
 
   @override
   void dispose() {
-    _controller?.dispose();
+    controller?.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!_isInitialized || _controller == null) {
+    if (!isPermissionGranted) {
+      return const Scaffold(
+        body: Center(child: Text('يرجى السماح بصلاحيات الكاميرا والميكروفون')),
+      );
+    }
+
+    if (controller == null || !controller!.value.isInitialized) {
       return const Scaffold(
         backgroundColor: Colors.black,
-        body: Center(
-          child: CircularProgressIndicator(color: Colors.amber),
-        ),
+        body: Center(child: CircularProgressIndicator(color: Colors.amber)),
       );
+    }
+
+    var cameraPreview = CameraPreview(controller!);
+    Widget sizedPreview = ClipRect(
+      child: OverflowBox(
+        alignment: Alignment.center,
+        child: FittedBox(
+          fit: BoxFit.cover,
+          child: SizedBox(
+            width: controller!.value.previewSize?.height ?? MediaQuery.of(context).size.width,
+            height: controller!.value.previewSize?.width ?? MediaQuery.of(context).size.height,
+            child: cameraPreview,
+          ),
+        ),
+      ),
+    );
+
+    if (_aspectRatioMode == '16:9') {
+      sizedPreview = AspectRatio(aspectRatio: 9 / 16, child: cameraPreview);
+    } else if (_aspectRatioMode == '4:3') {
+      sizedPreview = AspectRatio(aspectRatio: 3 / 4, child: cameraPreview);
     }
 
     return Scaffold(
       backgroundColor: Colors.black,
-      body: SafeArea(
-        child: Stack(
-          children: [
-            // عرض الكاميرا بالدقة الكاملة
-            Positioned.fill(
-              child: CameraPreview(_controller!),
-            ),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          // معاينة الكاميرا والزووم
+          GestureDetector(
+            onScaleUpdate: (details) async {
+              double newZoom = (_currentZoom * details.scale).clamp(_minZoom, _maxZoom);
+              setState(() { _currentZoom = newZoom; });
+              await controller!.setZoomLevel(_currentZoom);
+            },
+            child: Center(child: sizedPreview),
+          ),
 
-            // الشريط العلوي للاعدادات وزر الـ Live Auto أقصى اليسار
-            Positioned(
-              top: 15,
-              left: 15,
-              right: 15,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  // زر Live Auto حصرياً أقصى الشمال
-                  GestureDetector(
-                    onTap: () {
-                      setState(() {
-                        _isLiveAutoOn = !_isLiveAutoOn;
-                      });
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: Colors.black54,
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: _isLiveAutoOn ? Colors.amber : Colors.grey,
-                          width: 1.5,
-                        ),
+          // الشريط العلوي (فلاش، أبعاد، ترس الإعدادات، ووضع AI)
+          Positioned(
+            top: 40,
+            left: 20,
+            right: 20,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    // الفلاش (يدعم الأمامي والخلفي حسب الكاميرا النشطة)
+                    IconButton(
+                      icon: Icon(
+                        _flashMode == FlashMode.torch ? Icons.flash_on : Icons.flash_off,
+                        color: _flashMode == FlashMode.torch ? Colors.amber : Colors.white,
+                        size: 26,
                       ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.circle,
-                            size: 12,
-                            color: _isLiveAutoOn ? Colors.amber : Colors.grey,
-                          ),
-                          const SizedBox(width: 5),
-                          Text(
-                            'LIVE AUTO',
-                            style: TextStyle(
-                              color: _isLiveAutoOn ? Colors.amber : Colors.grey,
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
+                      onPressed: _toggleFlash,
+                    ),
+                    // زر الإعدادات (Settings)
+                    IconButton(
+                      icon: const Icon(Icons.settings, color: Colors.white, size: 26),
+                      onPressed: () {
+                        showModalBottomSheet(
+                          context: context,
+                          backgroundColor: Colors.grey[900],
+                          builder: (context) => Container(
+                            padding: const EdgeInsets.all(20),
+                            height: 220,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text('إعدادات الكاميرا الذكية', style: TextStyle(color: Colors.amber, fontSize: 18, fontWeight: FontWeight.bold)),
+                                const Divider(color: Colors.white24),
+                                ListTile(
+                                  leading: const Icon(Icons.memory, color: Colors.white),
+                                  title: const Text('أداء معالجة الذكاء الاصطناعي (AI Processing)', style: TextStyle(color: Colors.white)),
+                                  subtitle: const Text('مفعل بأقصى طاقة للمعالج (60%)', style: TextStyle(color: Colors.amber, fontSize: 12)),
+                                ),
+                                ListTile(
+                                  leading: const Icon(Icons.camera, color: Colors.white),
+                                  title: const Text('الكاميرا النشطة الحالية', style: TextStyle(color: Colors.white)),
+                                  subtitle: Text(cameras[selectedCameraIndex].lensDirection.name.toUpperCase(), style: const TextStyle(color: Colors.amber, fontSize: 12)),
+                                ),
+                              ],
                             ),
                           ),
-                        ],
-                      ),
+                        );
+                      },
                     ),
-                  ),
+                  ],
+                ),
 
-                  // مؤشر الدقة العالية
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.black45,
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(color: Colors.amber),
-                    ),
-                    child: const Text(
-                      '50MP AI',
-                      style: TextStyle(color: Colors.amber, fontSize: 10, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // الشريط السفلي للتحكم والالتقاط
-            Positioned(
-              bottom: 30,
-              left: 0,
-              right: 0,
-              child: Column(
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      // معرض الصور (معاينة)
-                      Container(
-                        width: 45,
-                        height: 45,
-                        decoration: BoxDecoration(
-                          color: Colors.grey[900],
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.white24),
-                        ),
-                        child: const Icon(Icons.image, color: Colors.white),
-                      ),
-
-                      // زر الالتقاط الكبير
-                      GestureDetector(
-                        onTap: () async {
-                          if (_controller!.value.isTakingPicture) return;
-                          try {
-                            final image = await _controller!.takePicture();
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('تم التقاط الصورة: ${image.path}')),
-                            );
-                          } catch (e) {
-                            debugPrint('خطأ في الالتقاط: $e');
-                          }
-                        },
+                // أزرار الأبعاد (Full, 16:9, 4:3)
+                Row(
+                  children: ['Full', '16:9', '4:3'].map((mode) {
+                    bool isSelected = _aspectRatioMode == mode;
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 3.0),
+                      child: GestureDetector(
+                        onTap: () => setState(() => _aspectRatioMode = mode),
                         child: Container(
-                          width: 75,
-                          height: 75,
-                          padding: const EdgeInsets.all(4),
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                           decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.amber, width: 3),
+                            color: isSelected ? Colors.amber : Colors.black45,
+                            borderRadius: BorderRadius.circular(10),
                           ),
-                          child: Container(
-                            decoration: const BoxDecoration(
-                              color: Colors.white,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
+                          child: Text(mode, style: TextStyle(color: isSelected ? Colors.black : Colors.white, fontWeight: FontWeight.bold, fontSize: 11)),
                         ),
                       ),
+                    );
+                  }).toList(),
+                ),
 
-                      // زر تبديل الكاميرا/العدسات
-                      IconButton(
-                        icon: const Icon(Icons.flip_camera_android, color: Colors.white, size: 30),
-                        onPressed: _toggleCamera,
-                      ),
-                    ],
+                // مؤشر 50MP AI
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(15),
+                    border: Border.all(color: Colors.amber, width: 1),
                   ),
-                ],
-              ),
+                  child: const Text('50MP AI', style: TextStyle(color: Colors.amber, fontSize: 10, fontWeight: FontWeight.bold)),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+
+          // شريط الزووم الجانبي
+          Positioned(
+            right: 15,
+            top: MediaQuery.of(context).size.height / 2 - 50,
+            child: Column(
+              children: [
+                Text('${_currentZoom.toStringAsFixed(1)}x', style: const TextStyle(color: Colors.amber, fontSize: 11)),
+                const SizedBox(height: 5),
+                Container(
+                  height: 90,
+                  width: 30,
+                  decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(15)),
+                  child: RotatedBox(
+                    quarterTurns: 3,
+                    child: Slider(
+                      value: _currentZoom,
+                      min: _minZoom,
+                      max: _maxZoom > 4.0 ? 4.0 : _maxZoom,
+                      activeColor: Colors.amber,
+                      inactiveColor: Colors.white30,
+                      onChanged: (value) async {
+                        setState(() { _currentZoom = value; });
+                        await controller!.setZoomLevel(value);
+                      },
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // الشريط السفلي (التقاط الصور، تسجيل الفيديو، المعرض، وتغيير الكاميرا)
+          Positioned(
+            bottom: 30,
+            left: 0,
+            right: 0,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                // زر المعرض
+                Container(
+                  height: 48,
+                  width: 48,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[850],
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.white24),
+                  ),
+                  child: const Icon(Icons.photo_library, color: Colors.white, size: 24),
+                ),
+
+                // زر الغالق الأساسي (للصور)
+                GestureDetector(
+                  onTap: _takePicture,
+                  onLongPress: _toggleVideoRecording, // الضغط المطول لتسجيل الفيديو
+                  child: Container(
+                    height: 75,
+                    width: 75,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: _isRecording ? Colors.red : Colors.amber, width: 4),
+                      color: Colors.white24,
+                    ),
+                    child: Center(
+                      child: Container(
+                        height: 58,
+                        width: 58,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: _isRecording ? Colors.red : Colors.white,
+                        ),
+                        child: _isRecording ? const Icon(Icons.stop, color: Colors.white, size: 30) : null,
+                      ),
+                    ),
+                  ),
+                ),
+
+                // زر تبديل الكاميرا (أمامية / خلفية مع دعم الفلاش)
+                IconButton(
+                  iconSize: 32,
+                  icon: const Icon(Icons.cameraswitch, color: Colors.white),
+                  onPressed: _switchCamera,
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

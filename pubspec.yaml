@@ -1,5 +1,5 @@
-name: camera_ai_app
-description: "A new High-Performance Camera AI Flutter application."
+name: ai_camera
+description: "A new Flutter camera application with AI capabilities and video support."
 publish_to: 'none'
 
 version: 1.0.0+1
@@ -10,9 +10,13 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  cupertino_icons: ^1.0.6
+
+  # المكتبات الخاصة بالكاميرا والميديا والمعرض
   camera: ^0.10.5+9
-  permission_handler: ^11.0.1
+  permission_handler: ^11.3.1
+  gal: ^2.3.0
+  path_provider: ^2.1.2
+  cupertino_icons: ^1.0.6
 
 dev_dependencies:
   flutter_test:
