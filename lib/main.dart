@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:gal/gal.dart';
+import 'dart:io';
 
 List<CameraDescription> cameras = [];
 
@@ -61,12 +62,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   
   String _selectedAspectRatio = '4:3';
   
-  // متغيرات ميزة التركيز والتحكم بالإضاءة باللمس (Tap-to-Focus & Exposure)
+  // متغيرات التركيز والتحكم بالإضاءة بالسحب الفوري
   bool _showFocusBox = false;
   Offset _focusPoint = Offset.zero;
   double _exposureOffset = 0.0;
   double _minAvailableExposureOffset = 0.0;
   double _maxAvailableExposureOffset = 0.0;
+  double _dragStartY = 0.0;
 
   late AnimationController _flashAnimController;
   late Animation<double> _flashAnimation;
@@ -132,6 +134,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
       _minAvailableExposureOffset = await controller!.getMinExposureOffset();
       _maxAvailableExposureOffset = await controller!.getMaxExposureOffset();
+      _exposureOffset = 0.0;
 
       if (mounted) setState(() {});
     } catch (e) {
@@ -177,12 +180,29 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     } catch (e) {
       print(e);
     }
+  }
 
-    Future.delayed(const Duration(seconds: 3), () {
-      if (mounted) {
-        setState(() { _showFocusBox = false; });
-      }
+  void _onVerticalDragStart(DragStartDetails details) {
+    _dragStartY = details.localPosition.dy;
+  }
+
+  void _onVerticalDragUpdate(DragUpdateDetails details) async {
+    if (controller == null || !controller!.value.isInitialized) return;
+    double delta = _dragStartY - details.localPosition.dy;
+    double sensitivity = 150.0;
+    double newOffset = (_exposureOffset + (delta / sensitivity) * (_maxAvailableExposureOffset - _minAvailableExposureOffset))
+        .clamp(_minAvailableExposureOffset, _maxAvailableExposureOffset);
+
+    setState(() {
+      _exposureOffset = newOffset;
+      _dragStartY = details.localPosition.dy;
     });
+
+    try {
+      await controller!.setExposureOffset(_exposureOffset);
+    } catch (e) {
+      print(e);
+    }
   }
 
   Future<void> _captureAction() async {
@@ -201,10 +221,27 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         HapticFeedback.heavyImpact();
       }
 
-      final image = await controller!.takePicture();
-      await Gal.putImage(image.path);
+      if (_isLiveEnabled) {
+        // آلية الـ Live Motion Photo: التقاط الصورة الثابتة وتسجيل مقطع حركة قصير مدمج
+        final image = await controller!.takePicture();
+        await controller!.startVideoRecording();
+        await Future.delayed(const Duration(milliseconds: 1200)); // مدة الحركة المدمجة للـ Live Photo
+        final motionVideo = await controller!.stopVideoRecording();
+        
+        // حفظ الصورة الثابتة أولاً
+        await Gal.putImage(image.path);
+        // حفظ الفيديو المدمج الخاص بالصورة المتحركة ليظهر في المعرض كـ Motion Photo
+        await Gal.putVideo(motionVideo.path);
+      } else {
+        final image = await controller!.takePicture();
+        await Gal.putImage(image.path);
+      }
     } catch (e) {
       print('Error capturing: $e');
+      try {
+        final image = await controller!.takePicture();
+        await Gal.putImage(image.path);
+      } catch (_) {}
     }
   }
 
@@ -236,7 +273,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   @override
   void dispose() {
-    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.removeObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
@@ -251,14 +288,16 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       return const Scaffold(backgroundColor: Colors.black, body: Center(child: CircularProgressIndicator(color: Colors.amber)));
     }
 
+    bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
+
     Widget previewWidget = AspectRatio(
       aspectRatio: _getAspectRatioValue(),
       child: ColorFiltered(
         colorFilter: _isHdrPlusEnabled
             ? const ColorFilter.matrix(<double>[
-                1.2, 0, 0, 0, 10,
-                0, 1.2, 0, 0, 10,
-                0, 0, 1.2, 0, 10,
+                1.25, 0, 0, 0, 15,
+                0, 1.25, 0, 0, 15,
+                0, 0, 1.25, 0, 15,
                 0, 0, 0, 1, 0,
               ])
             : (_isFilterActive
@@ -269,7 +308,11 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                     0, 0, 0, 1, 0,
                   ])
                 : const ColorFilter.mode(Colors.transparent, BlendMode.dst)),
-        child: CameraPreview(controller!),
+        child: Transform(
+          alignment: Alignment.center,
+          transform: isFrontCamera ? Matrix4.rotationY(3.14159) : Matrix4.identity(),
+          child: CameraPreview(controller!),
+        ),
       ),
     );
 
@@ -282,6 +325,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               Positioned.fill(
                 child: GestureDetector(
                   onTapDown: (details) => _onTapToFocus(details, constraints),
+                  onVerticalDragStart: _onVerticalDragStart,
+                  onVerticalDragUpdate: _onVerticalDragUpdate,
                   onScaleStart: (_) {
                     setState(() { _showZoomWheel = true; });
                   },
@@ -306,24 +351,27 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
-              // دايرة التركيز ومؤشر الإضاءة الأخضر (Tap-to-Focus & Exposure Slider)
+              // دايرة التركيز ومؤشر الإضاءة الخضراء
               if (_showFocusBox)
                 Positioned(
-                  left: _focusPoint.dx - 40,
-                  top: _focusPoint.dy - 40,
+                  left: _focusPoint.dx - 35,
+                  top: _focusPoint.dy - 35,
                   child: Row(
                     children: [
                       Container(
-                        height: 80,
-                        width: 80,
+                        height: 70,
+                        width: 70,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           border: Border.all(color: Colors.greenAccent, width: 1.5),
                         ),
+                        child: const Center(
+                          child: Icon(Icons.wb_sunny_outlined, color: Colors.greenAccent, size: 20),
+                        ),
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 8),
                       SizedBox(
-                        height: 100,
+                        height: 90,
                         child: RotatedBox(
                           quarterTurns: 3,
                           child: Slider(
@@ -343,7 +391,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                 ),
 
-              // تأثير ومضة الالتقاط
+              // تأثير ومضة الالتقاط البيضاء
               AnimatedBuilder(
                 animation: _flashAnimation,
                 builder: (context, child) {
@@ -355,7 +403,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 },
               ),
 
-              // الشريط العلوي (فلاش، HDR+, Live Photo، المؤقت، الفلاتر)
+              // الشريط العلوي
               Positioned(
                 top: 40,
                 left: 15,
@@ -374,13 +422,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                     GestureDetector(
                       onTap: () {
                         setState(() { _isHdrPlusEnabled = !_isHdrPlusEnabled; });
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(_isHdrPlusEnabled ? '⚡ HDR+: ON (Enhanced)' : 'HDR+: OFF'),
-                            duration: const Duration(milliseconds: 500),
-                            backgroundColor: Colors.amber[800],
-                          ),
-                        );
                       },
                       child: Text(
                         'HDR+',
@@ -394,6 +435,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                     GestureDetector(
                       onTap: () {
                         setState(() { _isLiveEnabled = !_isLiveEnabled; });
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(_isLiveEnabled ? '✨ Live Motion Photo: ON' : 'Live Photo: OFF'),
+                            duration: const Duration(milliseconds: 500),
+                            backgroundColor: Colors.amber[800],
+                          ),
+                        );
                       },
                       child: Icon(
                         Icons.adjust,
@@ -494,7 +542,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               // عجلة الزووم الدائرية
               if (_showZoomWheel)
                 Positioned(
-                  bottom: 210,
+                  bottom: 235,
                   left: 0,
                   right: 0,
                   child: Center(
@@ -535,7 +583,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
               // أزرار التكبير الثابتة
               Positioned(
-                bottom: 170,
+                bottom: 195,
                 left: 0,
                 right: 0,
                 child: Center(
@@ -596,7 +644,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
               // الشريط السفلي
               Positioned(
-                bottom: 40,
+                bottom: 60,
                 left: 0,
                 right: 0,
                 child: Column(
