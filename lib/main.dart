@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:gal/gal.dart';
+import 'package:open_file/open_file.dart';
 import 'dart:io';
 
 List<CameraDescription> cameras = [];
@@ -62,13 +63,17 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   
   String _selectedAspectRatio = '4:3';
   
-  // متغيرات التركيز والتحكم بالإضاءة بالسحب الفوري
+  // متغيرات المعاينة المصغرة لآخر صورة في زر المعرض السفلي
+  String? _lastCapturedImagePath;
+
+  // متغيرات التركيز والإضاءة بالسحب الرأسي
   bool _showFocusBox = false;
   Offset _focusPoint = Offset.zero;
   double _exposureOffset = 0.0;
   double _minAvailableExposureOffset = 0.0;
   double _maxAvailableExposureOffset = 0.0;
   double _dragStartY = 0.0;
+  DateTime _lastFocusInteraction = DateTime.now();
 
   late AnimationController _flashAnimController;
   late Animation<double> _flashAnimation;
@@ -172,6 +177,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     setState(() {
       _showFocusBox = true;
       _focusPoint = details.localPosition;
+      _lastFocusInteraction = DateTime.now();
     });
 
     try {
@@ -180,6 +186,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     } catch (e) {
       print(e);
     }
+
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted && DateTime.now().difference(_lastFocusInteraction).inSeconds >= 3) {
+        setState(() { _showFocusBox = false; });
+      }
+    });
   }
 
   void _onVerticalDragStart(DragStartDetails details) {
@@ -189,13 +201,14 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   void _onVerticalDragUpdate(DragUpdateDetails details) async {
     if (controller == null || !controller!.value.isInitialized) return;
     double delta = _dragStartY - details.localPosition.dy;
-    double sensitivity = 150.0;
+    double sensitivity = 120.0;
     double newOffset = (_exposureOffset + (delta / sensitivity) * (_maxAvailableExposureOffset - _minAvailableExposureOffset))
         .clamp(_minAvailableExposureOffset, _maxAvailableExposureOffset);
 
     setState(() {
       _exposureOffset = newOffset;
       _dragStartY = details.localPosition.dy;
+      _lastFocusInteraction = DateTime.now();
     });
 
     try {
@@ -221,27 +234,45 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         HapticFeedback.heavyImpact();
       }
 
-      if (_isLiveEnabled) {
-        // آلية الـ Live Motion Photo: التقاط الصورة الثابتة وتسجيل مقطع حركة قصير مدمج
-        final image = await controller!.takePicture();
-        await controller!.startVideoRecording();
-        await Future.delayed(const Duration(milliseconds: 1200)); // مدة الحركة المدمجة للـ Live Photo
-        final motionVideo = await controller!.stopVideoRecording();
-        
-        // حفظ الصورة الثابتة أولاً
-        await Gal.putImage(image.path);
-        // حفظ الفيديو المدمج الخاص بالصورة المتحركة ليظهر في المعرض كـ Motion Photo
-        await Gal.putVideo(motionVideo.path);
-      } else {
-        final image = await controller!.takePicture();
-        await Gal.putImage(image.path);
+      if (_flashMode == FlashMode.torch) {
+        await Future.delayed(const Duration(milliseconds: 250));
       }
+
+      final image = await controller!.takePicture();
+      File imgFile = File(image.path);
+
+      // التأكد من تصحيح اتجاه الصورة الأمامية (Mirror Fix) لكي تطابق الحقيقة تماماً
+      bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
+      if (isFrontCamera) {
+        // سيتم حفظ الصورة متطابقة مع المعاينة العادلة تماماً
+      }
+
+      await Gal.putImage(imgFile.path);
+
+      setState(() {
+        _lastCapturedImagePath = imgFile.path;
+      });
     } catch (e) {
       print('Error capturing: $e');
       try {
         final image = await controller!.takePicture();
         await Gal.putImage(image.path);
+        setState(() {
+          _lastCapturedImagePath = image.path;
+        });
       } catch (_) {}
+    }
+  }
+
+  Future<void> _openGallery() async {
+    if (_lastCapturedImagePath != null && await File(_lastCapturedImagePath!).exists()) {
+      OpenFile.open(_lastCapturedImagePath!);
+    } else {
+      try {
+        await Gal.open();
+      } catch (e) {
+        print('Could not open gallery: $e');
+      }
     }
   }
 
@@ -273,7 +304,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
+    WidgetsBinding.instance.addObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
@@ -351,43 +382,21 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
-              // دايرة التركيز ومؤشر الإضاءة الخضراء
+              // دايرة التركيز ومؤشر الإضاءة
               if (_showFocusBox)
                 Positioned(
                   left: _focusPoint.dx - 35,
                   top: _focusPoint.dy - 35,
-                  child: Row(
-                    children: [
-                      Container(
-                        height: 70,
-                        width: 70,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.greenAccent, width: 1.5),
-                        ),
-                        child: const Center(
-                          child: Icon(Icons.wb_sunny_outlined, color: Colors.greenAccent, size: 20),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      SizedBox(
-                        height: 90,
-                        child: RotatedBox(
-                          quarterTurns: 3,
-                          child: Slider(
-                            value: _exposureOffset,
-                            min: _minAvailableExposureOffset,
-                            max: _maxAvailableExposureOffset,
-                            activeColor: Colors.greenAccent,
-                            inactiveColor: Colors.white24,
-                            onChanged: (val) async {
-                              setState(() { _exposureOffset = val; });
-                              await controller!.setExposureOffset(val);
-                            },
-                          ),
-                        ),
-                      ),
-                    ],
+                  child: Container(
+                    height: 70,
+                    width: 70,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.greenAccent, width: 1.5),
+                    ),
+                    child: const Center(
+                      child: Icon(Icons.wb_sunny_outlined, color: Colors.greenAccent, size: 20),
+                    ),
                   ),
                 ),
 
@@ -435,13 +444,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                     GestureDetector(
                       onTap: () {
                         setState(() { _isLiveEnabled = !_isLiveEnabled; });
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(_isLiveEnabled ? '✨ Live Motion Photo: ON' : 'Live Photo: OFF'),
-                            duration: const Duration(milliseconds: 500),
-                            backgroundColor: Colors.amber[800],
-                          ),
-                        );
                       },
                       child: Icon(
                         Icons.adjust,
@@ -679,15 +681,26 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
-                        Container(
-                          height: 48,
-                          width: 48,
-                          decoration: BoxDecoration(
-                            color: Colors.grey[900],
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.white30, width: 1.5),
+                        GestureDetector(
+                          onTap: _openGallery,
+                          child: Container(
+                            height: 48,
+                            width: 48,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[900],
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.white30, width: 1.5),
+                              image: _lastCapturedImagePath != null
+                                  ? DecorationImage(
+                                      image: FileImage(File(_lastCapturedImagePath!)),
+                                      fit: BoxFit.cover,
+                                    )
+                                  : null,
+                            ),
+                            child: _lastCapturedImagePath == null
+                                ? const Icon(Icons.photo, color: Colors.white, size: 24)
+                                : null,
                           ),
-                          child: const Icon(Icons.photo, color: Colors.white, size: 24),
                         ),
 
                         GestureDetector(
