@@ -1,5 +1,5 @@
-name: iphone_s25_camera
-description: "AI Camera Pro 2027"
+name: ai_camera_pro_2027
+description: "AI Camera Pro 2027 - تطبيق كاميرا ذكي احترافي"
 publish_to: 'none'
 
 version: 1.0.0+1
@@ -19,14 +19,6 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^3.0.0
-  flutter_launcher_icons: ^0.13.1
-
-flutter_launcher_icons:
-  image_path: "assets/app_icon.png"
-  android: true
-  ios: true
 
 flutter:
   uses-material-design: true
-  assets:
-    - assets/app_icon.png

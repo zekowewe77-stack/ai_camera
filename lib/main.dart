@@ -68,7 +68,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _isHdrActive = true;
   bool _isWatermarkActive = false;
 
-  String _videoResolution = '1080p';
+  String _videoResolution = '4K';
   String _selectedAspectRatio = '4:3';
 
   bool _showApertureSlider = false;
@@ -133,6 +133,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       preset = ResolutionPreset.max;
     } else if (_videoResolution == '2K') {
       preset = ResolutionPreset.ultraHigh;
+    } else {
+      preset = ResolutionPreset.high;
     }
 
     controller = CameraController(
@@ -169,7 +171,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // خوارزمية معالجة الحِدة والوضوح الفائق للتغلب على الكاميرا الأصلية
+  // خوارزمية معالجة الحِدة والتحسين الفائق للتغلب على الكاميرا الأصلية في الزوم
   Future<String> _enhanceAndSharpenImage(String imagePath) async {
     try {
       final File imageFile = File(imagePath);
@@ -177,6 +179,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
 
       if (capturedImage != null) {
+        // مصفوفة تعزيز الحواف وتوضيح النصوص
         img.Image sharpenedImage = img.convolution(
           capturedImage,
           filter: [
@@ -188,6 +191,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
           offset: 0,
         );
 
+        // تعديل التباين والألوان لإبراز التفاصيل الدقيقة
         sharpenedImage = img.adjustColor(
           sharpenedImage,
           contrast: 1.15,
@@ -233,7 +237,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       if (mounted) {
         setState(() { _isProcessing = false; });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم التقاط ومعالجة الصورة بجودة فائقة!'), duration: Duration(milliseconds: 600)),
+          const SnackBar(content: Text('✨ تم التقاط ومعالجة الصورة بجودة فائقة!'), duration: Duration(milliseconds: 700)),
         );
       }
     } catch (e) {
@@ -410,6 +414,32 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                     ),
                   ),
                 ),
+
+              Positioned(
+                top: 50,
+                left: 20,
+                right: 20,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    IconButton(
+                      icon: Icon(_flashMode == FlashMode.torch ? Icons.flash_on : Icons.flash_off, color: Colors.amber),
+                      onPressed: () {
+                        setState(() {
+                          _flashMode = _flashMode == FlashMode.torch ? FlashMode.off : FlashMode.torch;
+                        });
+                        controller?.setFlashMode(_flashMode);
+                      },
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.settings, color: Colors.white),
+                      onPressed: () {
+                        Navigator.push(context, MaterialPageRoute(builder: (context) => const SettingsScreen()));
+                      },
+                    ),
+                  ],
+                ),
+              ),
 
               Positioned(
                 bottom: 60,
