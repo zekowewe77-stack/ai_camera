@@ -55,12 +55,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   String _currentMode = 'PHOTO';
   bool _isRecording = false;
   bool _isLiveEnabled = true;
-  bool _isAiFocusEnabled = true; // خيار تركيز AI الجديد
+  bool _isAiFocusEnabled = true;
   bool _isTimerActive = false;
   bool _isShutterSoundOn = true;
   bool _isProcessing = false;
 
-  // إعدادات الفيديو (1080p, 2K, 4K بـ 30fps)
+  // إعدادات الفيديو الحقيقية (1080p, 2K, 4K بـ 30fps)
   String _videoResolution = '1080p';
   String _selectedAspectRatio = '4:3';
 
@@ -69,7 +69,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   double _selectedAperture = 4.0;
   final List<double> _apertureValues = [1.4, 2.0, 2.8, 4.0, 5.6, 8.0, 11.0, 16.0];
   
-  // تركيز وتحديد الوجه الديناميكي (يظهر فقط عند التحديد أو الضغط)
+  // التركيز وتحديد الوجه الديناميكي
   bool _showFocusBox = false;
   Offset _focusPoint = Offset.zero;
   double _exposureOffset = 0.0;
@@ -123,7 +123,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   Future<void> _initCamera(int index) async {
     if (controller != null) await controller!.dispose();
     
-    ResolutionPreset preset = ResolutionPreset.veryHigh; // 1080p
+    ResolutionPreset preset = ResolutionPreset.veryHigh;
     if (_videoResolution == '4K') {
       preset = ResolutionPreset.max;
     } else if (_videoResolution == '2K') {
@@ -185,7 +185,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // ضغطة ديناميكية لإظهار مربع التركيز الأبيض على وجه الشخص (نفس تصميم الصورة بالضبط)
   Future<void> _onTapToFocus(TapDownDetails details, BoxConstraints constraints) async {
     if (controller == null || !controller!.value.isInitialized) return;
 
@@ -207,7 +206,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       print(e);
     }
 
-    // إخفاء المربع بعد 3 ثواني لتظل الشاشة نظيفة إذا لم يتم التفاعل
     Future.delayed(const Duration(seconds: 3), () {
       if (mounted && DateTime.now().difference(_lastFocusTime).inSeconds >= 3) {
         setState(() { _showFocusBox = false; });
@@ -423,7 +421,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
-              // مربع تركيز الوجه الأبيض الديناميكي (مطابق لتصميم الصورة التي أرفقتها بالضبط)
+              // مربع تركيز الوجه الأبيض عند الضغط أو التحديد
               if (_showFocusBox && _isAiFocusEnabled)
                 Positioned(
                   left: _focusPoint.dx - 80,
@@ -432,13 +430,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                     width: 160,
                     height: 200,
                     decoration: BoxDecoration(
-                      border: Border.all(color: Colors.white, width: 2.0), // إطار أبيض ناصع مثل الصورة
-                      borderRadius: BorderRadius.circular(20), // حواف مستديرة احترافية
+                      border: Border.all(color: Colors.white, width: 2.0),
+                      borderRadius: BorderRadius.circular(20),
                     ),
                   ),
                 ),
 
-              // زر تحكم البورتريه وفتحة العدسة (Aperture) على الشمال
+              // زر فتحة العدسة للبورتريه على اليسار
               if (_currentMode == 'PORTRAIT')
                 Positioned(
                   top: 100,
@@ -461,7 +459,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                 ),
 
-              // شريط تحكم فتحة العدسة للبورتريه (f1.4 إلى f16)
+              // شريط فتحة العدسة
               if (_currentMode == 'PORTRAIT' && _showApertureSlider)
                 Positioned(
                   top: 160,
@@ -535,7 +533,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                 ),
 
-              // إعدادات جودة الفيديو (1080p, 2K, 4K بـ 30fps)
+              // خيارات الفيديو (1080p, 2K, 4K)
               if (_currentMode == 'VIDEO')
                 Positioned(
                   top: 90,
@@ -576,7 +574,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                 ),
 
-              // أداة ضبط الإضاءة والتعريض الموضعي مع زووم الشمس
+              // أداة ضبط الإضاءة والتعريض الموضعي
               if (_showFocusBox)
                 Positioned(
                   right: 20,
@@ -625,7 +623,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 },
               ),
 
-              // الشريط العلوي (تم وضع خيار "تركيز AI" المباشر بوضوح بناءً على طلبك)
+              // الشريط العلوي مع زر "تركيز AI"
               Positioned(
                 top: 40,
                 left: 15,
@@ -801,7 +799,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
-              // الأوضاع الأربعة الأساسية
+              // الأوضاع الأربعة السفلى
               Positioned(
                 bottom: 60,
                 left: 0,
