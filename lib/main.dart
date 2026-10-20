@@ -4,7 +4,6 @@ import 'package:camera/camera.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:gal/gal.dart';
 import 'dart:async';
-import 'dart:io';
 
 List<CameraDescription> cameras = [];
 
@@ -13,7 +12,7 @@ Future<void> main() async {
   try {
     cameras = await availableCameras();
   } catch (e) {
-    debugPrint('خطأ في تهيئة الكاميرات: $e');
+    debugPrint('خطأ الكاميرا: $e');
   }
   runApp(const CameraApp());
 }
@@ -57,7 +56,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _isAiFocusEnabled = true;
   bool _isTimerActive = false;
   bool _isGridActive = false;
-  bool _isShutterSoundOn = true;
   bool _isProcessing = false;
   int _countdownSeconds = 0;
 
@@ -120,8 +118,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     await Gal.requestAccess();
 
     if (await Permission.camera.isGranted) {
-      if (mounted) setState(() { isPermissionGranted = true; });
-      if (cameras.isNotEmpty) _initCamera(selectedCameraIndex);
+      if (mounted) {
+        setState(() { isPermissionGranted = true; });
+      }
+      if (cameras.isNotEmpty) {
+        _initCamera(selectedCameraIndex);
+      }
     }
   }
 
@@ -156,9 +158,11 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       _maxAvailableExposureOffset = await controller!.getMaxExposureOffset();
       _exposureOffset = 0.0;
 
-      if (mounted) setState(() {});
+      if (mounted) {
+        setState(() {});
+      }
     } catch (e) {
-      debugPrint('خطأ أثناء تهيئة الكاميرا: $e');
+      debugPrint('Error: $e');
     }
   }
 
@@ -260,13 +264,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     try {
       _flashAnimController.forward().then((_) => _flashAnimController.reverse());
-      
-      if (_isShutterSoundOn) {
-        SystemSound.play(SystemSoundType.click);
-        HapticFeedback.heavyImpact();
-      }
+      SystemSound.play(SystemSoundType.click);
+      HapticFeedback.heavyImpact();
 
-      setState(() { _isProcessing = true; _showExpandedPanel = false; });
+      if (mounted) {
+        setState(() { _isProcessing = true; _showExpandedPanel = false; });
+      }
 
       if (_currentMode == 'صورة ليلية') {
         try {
@@ -292,8 +295,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         );
       }
     } catch (e) {
-      debugPrint('خطأ في الالتقاط: $e');
-      if (mounted) setState(() { _isProcessing = false; });
+      debugPrint('Error: $e');
+      if (mounted) {
+        setState(() { _isProcessing = false; });
+      }
     }
   }
 
@@ -302,10 +307,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     if (_isRecording) {
       _videoTimer?.cancel();
       final file = await controller!.stopVideoRecording();
-      setState(() { 
-        _isRecording = false; 
-        _videoSeconds = 0;
-      });
+      if (mounted) {
+        setState(() { 
+          _isRecording = false; 
+          _videoSeconds = 0;
+        });
+      }
       await Gal.putVideo(file.path);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -314,14 +321,18 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       }
     } else {
       await controller!.startVideoRecording();
-      setState(() { 
-        _isRecording = true; 
-        _videoSeconds = 0;
-      });
-      _videoTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-        setState(() {
-          _videoSeconds++;
+      if (mounted) {
+        setState(() { 
+          _isRecording = true; 
+          _videoSeconds = 0;
         });
+      }
+      _videoTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (mounted) {
+          setState(() {
+            _videoSeconds++;
+          });
+        }
       });
     }
   }
@@ -417,8 +428,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   child: IgnorePointer(
                     child: Column(
                       children: [
-                        Expanded(child: Container(decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white30, width: 0.5))))),
-                        Expanded(child: Container(decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white30, width: 0.5))))),
+                        Expanded(child: Container(decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white30, width: 0.5))))),
+                        Expanded(child: Container(decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white30, width: 0.5))))),
                         Expanded(child: Container()),
                       ],
                     ),
