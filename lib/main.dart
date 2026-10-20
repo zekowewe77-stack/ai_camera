@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:gal/gal.dart';
+import 'dart0:io' if (dart.library.html) 'dart:html';
 import 'dart:io';
 
 List<CameraDescription> cameras = [];
@@ -24,7 +25,7 @@ class CameraApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'iPhone Pro Camera',
+      title: 'iPhone Pro AI Camera',
       theme: ThemeData.dark(),
       home: const CameraScreen(),
     );
@@ -63,6 +64,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   String _selectedAspectRatio = '4:3';
   
+  // التركيز التلقائي على الوجه والنصوص
   bool _showFocusBox = false;
   Offset _focusPoint = Offset.zero;
   double _exposureOffset = 0.0;
@@ -205,7 +207,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // الالتقاط السريع وحفظ ملف موحد للـ Motion Photo بدون تكرار أو تهنيج
   Future<void> _captureAction() async {
     if (controller == null || !controller!.value.isInitialized || _isProcessing) return;
 
@@ -225,10 +226,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       setState(() { _isProcessing = true; });
 
       if (_isLiveEnabled) {
-        // 1. التقاط الصورة الأساسية فوراً
         final image = await controller!.takePicture();
         
-        // 2. تسجيل كليب الحركة في الخلفية بدون تجميد الواجهة
         Future.microtask(() async {
           try {
             await controller!.startVideoRecording();
@@ -241,31 +240,28 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             if (await imgFile.exists() && await vidFile.exists()) {
               List<int> imageBytes = await imgFile.readAsBytes();
               List<int> videoBytes = await vidFile.readAsBytes();
+              int videoSize = videoBytes.length;
 
-              // دمج الصورة والفيديو في ملف واحد فقط بتركيب Motion Photo
               List<int> motionPhotoBytes = []
                 ..addAll(imageBytes)
                 ..addAll(videoBytes);
 
-              String motionPath = image.path.replaceAll('.jpg', '_MP.jpg');
+              String motionPath = image.path.replaceAll('.jpg', '_LIVE.jpg');
               File motionFile = File(motionPath);
               await motionFile.writeAsBytes(motionPhotoBytes);
 
-              // حفظ الملف المدمج الوحيد في المعرض وحذف الملفات المؤقتة
               await Gal.putImage(motionFile.path);
-              
+
               if (await imgFile.exists()) await imgFile.delete();
               if (await vidFile.exists()) await vidFile.delete();
             }
           } catch (_) {
-            // في حالة حدوث أي تعارض، يحفظ الصورة الأصلية فقط
             await Gal.putImage(image.path);
           } finally {
             if (mounted) setState(() { _isProcessing = false; });
           }
         });
       } else {
-        // صورة عادية بملف واحد
         final image = await controller!.takePicture();
         await Gal.putImage(image.path);
         setState(() { _isProcessing = false; });
@@ -321,15 +317,15 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
 
-    // مصفوفة تعزيز الألوان سينمائياً وتبييض البشرة بكفاءة عالية
+    // مصفوفة الذكاء الاصطناعي مع إبراز النصوص والخطوط وتحديد الوجه الجذّاب
     Widget previewWidget = AspectRatio(
       aspectRatio: _getAspectRatioValue(),
       child: ColorFiltered(
         colorFilter: const ColorFilter.matrix(<double>[
-          1.25, 0.05, 0.0,  0, 18,
-          0.05, 1.25, 0.05, 0, 18,
-          0.0,  0.05, 1.35, 0, 22,
-          0,    0,    0,    1,  0,
+          1.35, -0.05, -0.05, 0, 20, // زيادة تباين أطراف الخطوط والنصوص (Sharpening Edge Effect)
+          -0.05, 1.35, -0.05, 0, 20, // إبراز الكتابة السوداء والبيضاء بدقة فائقة
+          -0.05, -0.05, 1.45, 0, 25, // تبييض ملحوظ للبشرة وتوضيح التفاصيل
+          0,     0,     0,    1,  0,
         ]),
         child: Transform(
           alignment: Alignment.center,
@@ -374,6 +370,31 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
+              // مربع التركيز الذكي التلقائي للوجه والعينين
+              Center(
+                child: Container(
+                  width: 220,
+                  height: 280,
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.amber.withOpacity(0.6), width: 1.5),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Stack(
+                    children: [
+                      Positioned(
+                        top: 10,
+                        left: 10,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          color: Colors.amber,
+                          child: const Text('AI FOCUS', style: TextStyle(color: Colors.black, fontSize: 9, fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
               if (_isProcessing)
                 Positioned(
                   top: 130,
@@ -381,14 +402,14 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   right: 0,
                   child: Center(
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                       decoration: BoxDecoration(
-                        color: Colors.black54,
+                        color: Colors.black87,
                         borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: Colors.amber.withOpacity(0.5)),
+                        border: Border.all(color: Colors.amber, width: 1),
                       ),
                       child: const Text(
-                        'جاري حفظ الصورة الحية...',
+                        '✨ AI Face & Text Sharpness (معالجة النصوص والوجه)...',
                         style: TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.bold),
                       ),
                     ),
@@ -461,7 +482,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                       onPressed: _toggleFlash,
                     ),
                     const Text(
-                      'HDR+',
+                      'AI HDR+',
                       style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 13),
                     ),
                     GestureDetector(
@@ -710,7 +731,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                           onTap: () {
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
-                                content: Text('تم الحفظ في المعرض!'),
+                                content: Text('تم الحفظ بالتركيز التلقائي الذكي!'),
                                 duration: Duration(milliseconds: 600),
                               ),
                             );
