@@ -54,7 +54,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   String _currentMode = 'PHOTO';
   bool _isRecording = false;
   bool _isLiveEnabled = true;
-  bool _isHdrPlusEnabled = false;
+  bool _isHdrPlusEnabled = true; // مفعل دائمًا لضمان أعلى جودة
   bool _isTimerActive = false;
   bool _isFilterActive = false;
   bool _showTopControlsMenu = false;
@@ -205,6 +205,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
+  // التقاط فوري فائق السرعة مع تفعيل الـ Live Photo في الخلفية
   Future<void> _captureAction() async {
     if (controller == null || !controller!.value.isInitialized || _isProcessing) return;
 
@@ -223,18 +224,18 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
       setState(() { _isProcessing = true; });
 
-      // التقاط الصورة الفورية في ساعتها
+      // التقاط الصورة الفورية الأساسية وظهورها في المعرض فوراً
       final image = await controller!.takePicture();
       await Gal.putImage(image.path);
       
       setState(() { _isProcessing = false; });
 
-      // إذا كانت الصورة الحية مفعلة، نقوم بتسجيل لقطة الحركة وحفظها بسلاسة في الخلفية
+      // معالجة الصورة الحية (Live Motion Photo) في الخلفية باحترافية
       if (_isLiveEnabled) {
         Future.microtask(() async {
           try {
             await controller!.startVideoRecording();
-            await Future.delayed(const Duration(milliseconds: 900));
+            await Future.delayed(const Duration(milliseconds: 1000));
             final liveVideo = await controller!.stopVideoRecording();
             
             File imgFile = File(image.path);
@@ -308,14 +309,15 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
 
+    // مصفوفة تبييض البشرة وتشكيل تشبع الألوان الخرافي (iPhone Pro Cinematic Color Matrix)
     Widget previewWidget = AspectRatio(
       aspectRatio: _getAspectRatioValue(),
       child: ColorFiltered(
         colorFilter: const ColorFilter.matrix(<double>[
-            1.1, 0, 0, 0, 10,
-            0, 1.1, 0, 0, 10,
-            0, 0, 1.1, 0, 10,
-            0, 0, 0, 1, 0,
+          1.25, 0.05, 0.0,  0, 18,  // تعزيز الأحمر وتبييض الوش
+          0.05, 1.25, 0.05, 0, 18,  // تفتيح وتوهج البشرة
+          0.0,  0.05, 1.35, 0, 22,  // تشبع ألوان فائق ونقاء زاهي
+          0,    0,    0,    1,  0,
         ]),
         child: Transform(
           alignment: Alignment.center,
@@ -375,7 +377,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                         border: Border.all(color: Colors.amber.withOpacity(0.5)),
                       ),
                       child: const Text(
-                        'جاري المعالجة...',
+                        'جاري المعالجة الاحترافية...',
                         style: TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.bold),
                       ),
                     ),
@@ -447,18 +449,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                       ),
                       onPressed: _toggleFlash,
                     ),
-                    GestureDetector(
-                      onTap: () {
-                        setState(() { _isHdrPlusEnabled = !_isHdrPlusEnabled; });
-                      },
-                      child: Text(
-                        'HDR+',
-                        style: TextStyle(
-                          color: _isHdrPlusEnabled ? Colors.amber : Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 13,
-                        ),
-                      ),
+                    const Text(
+                      'HDR+',
+                      style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 13),
                     ),
                     GestureDetector(
                       onTap: () {
@@ -702,12 +695,11 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
-                        // زر المعرض الأيسر
                         GestureDetector(
                           onTap: () {
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
-                                content: Text('تم حفظ الصورة في المعرض بنجاح!'),
+                                content: Text('تم حفظ الصورة بجودة احترافية في المعرض!'),
                                 duration: Duration(milliseconds: 600),
                               ),
                             );
