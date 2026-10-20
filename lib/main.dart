@@ -59,8 +59,14 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _isShutterSoundOn = true;
   bool _isProcessing = false;
 
+  // إعدادات لوحة التحكم المنسدلة (مطابقة للصورة الثانية 37908.png)
+  bool _showExpandedPanel = false;
+  bool _isHdrActive = true;
+  bool _isWatermarkActive = false;
+  bool _isGridActive = false;
+
   String _videoResolution = '1080p';
-  final String _selectedAspectRatio = '4:3';
+  String _selectedAspectRatio = '4:3';
 
   bool _showApertureSlider = false;
   double _selectedAperture = 4.0;
@@ -193,6 +199,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       _showFocusBox = true;
       _focusPoint = details.localPosition;
       _lastFocusTime = DateTime.now();
+      _showExpandedPanel = false; // إخفاء اللوحة عند الضغط للتصوير أو التركيز
     });
 
     try {
@@ -248,7 +255,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         HapticFeedback.heavyImpact();
       }
 
-      setState(() { _isProcessing = true; });
+      setState(() { _isProcessing = true; _showExpandedPanel = false; });
 
       if (_currentMode == 'NIGHT') {
         try {
@@ -394,7 +401,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   onVerticalDragStart: _onVerticalDragStart,
                   onVerticalDragUpdate: _onVerticalDragUpdate,
                   onScaleStart: (_) {
-                    setState(() { _showZoomWheel = true; });
+                    setState(() { _showZoomWheel = true; _showExpandedPanel = false; });
                   },
                   onScaleUpdate: (details) async {
                     double scaleFactor = details.scale > 1 ? 1.015 : 0.985;
@@ -416,6 +423,20 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   child: Center(child: previewWidget),
                 ),
               ),
+
+              // الشبكة (Grid Overlay) إذا كانت مفعلة من القائمة المنسدلة
+              if (_isGridActive)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: Column(
+                      children: [
+                        Expanded(child: Container(decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white24, width: 0.5))))),
+                        Expanded(child: Container(decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white24, width: 0.5))))),
+                        Expanded(child: Container()),
+                      ],
+                    ),
+                  ),
+                ),
 
               if (_showFocusBox && _isAiFocusEnabled)
                 Positioned(
@@ -439,6 +460,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                     onTap: () {
                       setState(() {
                         _showApertureSlider = !_showApertureSlider;
+                        _showExpandedPanel = false;
                       });
                     },
                     child: Container(
@@ -534,24 +556,23 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   child: Center(
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
-                      children: ['1080p', '2K', '4K'].map((res) {
-                        bool isSelected = _videoResolution == res;
-                        return GestureDetector(
-                          onTap: () {
-                            setState(() { _videoResolution = res; });
-                            _initCamera(selectedCameraIndex);
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                            margin: const EdgeInsets.symmetric(horizontal: 4),
-                            decoration: BoxDecoration(
-                              color: isSelected ? Colors.amber : Colors.black54,
-                              borderRadius: BorderRadius.circular(10),
+                      children: [
+                        for (var res in ['1080p', '2K', '4K'])
+                          GestureDetector(
+                            onTap: () {
+                              setState(() { _videoResolution = res; });
+                              _initCamera(selectedCameraIndex);
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              margin: const EdgeInsets.symmetric(horizontal: 4),
+                              decoration: BoxDecoration(
+                                color: _videoResolution == res ? Colors.amber : Colors.black54,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(res, style: TextStyle(color: _videoResolution == res ? Colors.black : Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
                             ),
-                            child: Text(res, style: TextStyle(color: isSelected ? Colors.black : Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
                           ),
-                        );
-                      }).toList()..add(
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                           margin: const EdgeInsets.symmetric(horizontal: 4),
@@ -561,7 +582,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                           ),
                           child: const Text('30fps', style: TextStyle(color: Colors.amber, fontSize: 11, fontWeight: FontWeight.bold)),
                         ),
-                      ),
+                      ],
                     ),
                   ),
                 ),
@@ -614,13 +635,104 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 },
               ),
 
+              // لوحة الخيارات المنسدلة (مطابقة للصورة الثانية 37908.png عند الضغط على سهم الإنزال)
+              if (_showExpandedPanel)
+                Positioned(
+                  top: 90,
+                  left: 20,
+                  right: 20,
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.92),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: Colors.white24),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceAround,
+                          children: [
+                            _buildPanelItem(
+                              _isHdrActive ? Icons.hdr_on : Icons.hdr_off,
+                              'HDR',
+                              _isHdrActive,
+                              () => setState(() => _isHdrActive = !_isHdrActive),
+                            ),
+                            _buildPanelItem(
+                              _isTimerActive ? Icons.timer : Icons.timer_off,
+                              'المؤقت',
+                              _isTimerActive,
+                              () => setState(() => _isTimerActive = !_isTimerActive),
+                            ),
+                            _buildPanelItem(
+                              Icons.branding_watermark,
+                              'علامات مائية',
+                              _isWatermarkActive,
+                              () => setState(() => _isWatermarkActive = !_isWatermarkActive),
+                            ),
+                            _buildPanelItem(
+                              Icons.grid_on,
+                              'الشبكة',
+                              _isGridActive,
+                              () => setState(() => _isGridActive = !_isGridActive),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceAround,
+                          children: [
+                            _buildPanelItem(
+                              Icons.center_focus_strong,
+                              'تركيز AI',
+                              _isAiFocusEnabled,
+                              () => setState(() => _isAiFocusEnabled = !_isAiFocusEnabled),
+                            ),
+                            _buildPanelItem(
+                              Icons.help_outline,
+                              'المساعدة',
+                              false,
+                              () {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('مرحباً بك في كاميرة S25 Pro الاحترافية')),
+                                );
+                              },
+                            ),
+                            _buildPanelItem(
+                              Icons.settings,
+                              'الإعدادات',
+                              false,
+                              () {
+                                setState(() => _showExpandedPanel = false);
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(builder: (context) => const SettingsScreen()),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+              // الشريط العلوي (مطابق للصورة الأولى 37909.png)
               Positioned(
                 top: 40,
                 left: 15,
                 right: 15,
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
+                    IconButton(
+                      icon: const Icon(Icons.document_scanner_outlined, color: Colors.white, size: 22),
+                      onPressed: () {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ماسح ذكي مفعل')));
+                      },
+                    ),
                     IconButton(
                       icon: Icon(
                         _flashMode == FlashMode.torch ? Icons.flash_on : Icons.flash_off,
@@ -629,59 +741,54 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                       ),
                       onPressed: _toggleFlash,
                     ),
+                    // زر السهم المنسدل (∨) المنتصف للوحة الإعدادات السريعة
                     GestureDetector(
                       onTap: () {
-                        setState(() { _isAiFocusEnabled = !_isAiFocusEnabled; });
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(_isAiFocusEnabled ? '✨ تركيز AI: مفعل' : 'تركيز AI: معطل'),
-                            duration: const Duration(milliseconds: 500),
-                            backgroundColor: Colors.amber[800],
-                          ),
-                        );
+                        setState(() {
+                          _showExpandedPanel = !_showExpandedPanel;
+                          _showApertureSlider = false;
+                        });
                       },
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                         decoration: BoxDecoration(
-                          color: _isAiFocusEnabled ? Colors.amber : Colors.black54,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.amber),
+                          color: Colors.grey[900],
+                          borderRadius: BorderRadius.circular(20),
                         ),
-                        child: Text(
-                          'تركيز AI',
-                          style: TextStyle(
-                            color: _isAiFocusEnabled ? Colors.black : Colors.amber,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
-                          ),
+                        child: Icon(
+                          _showExpandedPanel ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                          color: Colors.greenAccent,
+                          size: 24,
                         ),
                       ),
                     ),
-                    GestureDetector(
-                      onTap: () {
-                        setState(() { _isLiveEnabled = !_isLiveEnabled; });
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(_isLiveEnabled ? '✨ Live Motion Photo: ON' : 'Live Photo: OFF'),
-                            duration: const Duration(milliseconds: 500),
-                            backgroundColor: Colors.amber[800],
-                          ),
-                        );
-                      },
-                      child: Icon(
-                        _isLiveEnabled ? Icons.motion_photos_on : Icons.motion_photos_off,
-                        color: _isLiveEnabled ? Colors.amber : Colors.white70,
-                        size: 24,
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.white, width: 1),
+                        borderRadius: BorderRadius.circular(6),
                       ),
+                      child: const Text('50M', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.filter_vintage_outlined, color: Colors.white, size: 22),
+                      onPressed: () {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('الفلاتر السينمائية مفعلة')));
+                      },
                     ),
                     GestureDetector(
                       onTap: () {
-                        setState(() { _isTimerActive = !_isTimerActive; });
+                        setState(() {
+                          _selectedAspectRatio = _selectedAspectRatio == '4:3' ? '16:9' : '4:3';
+                        });
                       },
-                      child: Icon(
-                        Icons.timer_outlined,
-                        color: _isTimerActive ? Colors.amber : Colors.white70,
-                        size: 22,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.white, width: 1),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(_selectedAspectRatio, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
                       ),
                     ),
                   ],
@@ -720,7 +827,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                                 _currentZoom = val;
                                 _lastZoomInteraction = DateTime.now();
                               });
-                              await controller!.setZoomLevel(_currentZoom);
+                              await controller!.setZoomLevel(val);
                             },
                           ),
                         ],
@@ -808,6 +915,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                               onTap: () => setState(() {
                                 _currentMode = mode;
                                 if (mode != 'PORTRAIT') _showApertureSlider = false;
+                                _showExpandedPanel = false;
                               }),
                               child: Text(
                                 mode == 'NIGHT' ? 'صورة ليلية' : mode,
@@ -887,6 +995,112 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
           );
         },
       ),
+    );
+  }
+
+  Widget _buildPanelItem(IconData icon, String label, bool isActive, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: isActive ? Colors.amber.withOpacity(0.2) : Colors.grey[850],
+              shape: BoxShape.circle,
+              border: Border.all(color: isActive ? Colors.amber : Colors.transparent),
+            ),
+            child: Icon(icon, color: isActive ? Colors.amber : Colors.white70, size: 22),
+          ),
+          const SizedBox(height: 6),
+          Text(label, style: TextStyle(color: isActive ? Colors.amber : Colors.white70, fontSize: 11)),
+        ],
+      ),
+    );
+  }
+}
+
+// صفحة الإعدادات الشاملة (مطابقة للصورة الثالثة 37906.png)
+class SettingsScreen extends StatefulWidget {
+  const SettingsScreen({super.key});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  bool _shutterSound = false;
+  bool _floatingShutter = true;
+  bool _location = false;
+  bool _horizontalLevel = false;
+  bool _smudgedLensAlert = true;
+  bool _autoAiPortrait = true;
+  bool _scanQr = true;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        title: const Text('الإعدادات', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_forward, color: Colors.greenAccent),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          _buildSwitchTile('صوت الالتقاط', Icons.volume_up, _shutterSound, (val) => setState(() => _shutterSound = val)),
+          _buildSwitchTile('استنساخ زر الالتقاط\nتشغيل استنساخ زر الالتقاط تلقائياً عند تدوير هاتفك.', Icons.camera, _floatingShutter, (val) => setState(() => _floatingShutter = val)),
+          _buildSwitchTile('الموقع', Icons.location_on, _location, (val) => setState(() => _location = val)),
+          _buildSwitchTile('المستوى الأفقي', Icons.align_horizontal_center, _horizontalLevel, (val) => setState(() => _horizontalLevel = val)),
+          _buildListTile('قم بتعيين أزرار مستوى الصوت كـ', Icons.phone_android, 'التقاط'),
+          _buildSwitchTile('الإشعار بالعدسات المتسخة', Icons.camera_enhance, _smudgedLensAlert, (val) => setState(() => _smudgedLensAlert = val)),
+          
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: Text('إعدادات الالتقاط', style: TextStyle(color: Colors.greenAccent, fontSize: 13, fontWeight: FontWeight.bold)),
+          ),
+          
+          _buildListTile('طرق التصوير', Icons.camera_alt, 'إيماءات ووحدات تحكم'),
+          _buildListTile('محسن بورتريه AI تلقائي', Icons.face, 'تلقائي'),
+          _buildSwitchTile('مسح رموز QR', Icons.qr_code_scanner, _scanQr, (val) => setState(() => _scanQr = val)),
+          
+          const SizedBox(height: 20),
+          ListTile(
+            title: const Text('استعادة الإعدادات الافتراضية', style: TextStyle(color: Colors.redAccent, fontSize: 14)),
+            leading: const Icon(Icons.restore, color: Colors.redAccent),
+            onTap: () {
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم استعادة الإعدادات الافتراضية بنجاح')));
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSwitchTile(String title, IconData icon, bool value, ValueChanged<bool> onChanged) {
+    return SwitchListTile(
+      secondary: Icon(icon, color: Colors.white70),
+      title: Text(title, style: const TextStyle(color: Colors.white, fontSize: 14)),
+      value: value,
+      activeColor: Colors.greenAccent,
+      onChanged: onChanged,
+    );
+  }
+
+  Widget _buildListTile(String title, IconData icon, String subtitle) {
+    return ListTile(
+      leading: Icon(icon, color: Colors.white70),
+      title: Text(title, style: const TextStyle(color: Colors.white, fontSize: 14)),
+      subtitle: Text(subtitle, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+      trailing: const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 14),
+      onTap: () {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم فتح إعدادات: $title')));
+      },
     );
   }
 }
