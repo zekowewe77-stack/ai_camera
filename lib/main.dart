@@ -3,13 +3,12 @@ import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:gal/gal.dart';
-import 'dart0:io' if (dart.library.html) 'dart:html';
 import 'dart:io';
 
 List<CameraDescription> cameras = [];
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  WidgetsBindingEnvironment.ensureInitialized();
   try {
     cameras = await availableCameras();
   } catch (e) {
@@ -64,7 +63,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   String _selectedAspectRatio = '4:3';
   
-  // التركيز التلقائي على الوجه والنصوص
   bool _showFocusBox = false;
   Offset _focusPoint = Offset.zero;
   double _exposureOffset = 0.0;
@@ -240,7 +238,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             if (await imgFile.exists() && await vidFile.exists()) {
               List<int> imageBytes = await imgFile.readAsBytes();
               List<int> videoBytes = await vidFile.readAsBytes();
-              int videoSize = videoBytes.length;
 
               List<int> motionPhotoBytes = []
                 ..addAll(imageBytes)
@@ -317,14 +314,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
 
-    // مصفوفة الذكاء الاصطناعي مع إبراز النصوص والخطوط وتحديد الوجه الجذّاب
     Widget previewWidget = AspectRatio(
       aspectRatio: _getAspectRatioValue(),
       child: ColorFiltered(
         colorFilter: const ColorFilter.matrix(<double>[
-          1.35, -0.05, -0.05, 0, 20, // زيادة تباين أطراف الخطوط والنصوص (Sharpening Edge Effect)
-          -0.05, 1.35, -0.05, 0, 20, // إبراز الكتابة السوداء والبيضاء بدقة فائقة
-          -0.05, -0.05, 1.45, 0, 25, // تبييض ملحوظ للبشرة وتوضيح التفاصيل
+          1.35, -0.05, -0.05, 0, 20,
+          -0.05, 1.35, -0.05, 0, 20,
+          -0.05, -0.05, 1.45, 0, 25,
           0,     0,     0,    1,  0,
         ]),
         child: Transform(
@@ -370,7 +366,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
-              // مربع التركيز الذكي التلقائي للوجه والعينين
               Center(
                 child: Container(
                   width: 220,
@@ -409,7 +404,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                         border: Border.all(color: Colors.amber, width: 1),
                       ),
                       child: const Text(
-                        '✨ AI Face & Text Sharpness (معالجة النصوص والوجه)...',
+                        '✨ AI Face & Text Sharpness...',
                         style: TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.bold),
                       ),
                     ),
