@@ -12,7 +12,7 @@ Future<void> main() async {
   try {
     cameras = await availableCameras();
   } catch (e) {
-    debugPrint('خطأ الكاميرا: $e');
+    debugPrint('Camera Error: $e');
   }
   runApp(const CameraApp());
 }
@@ -51,7 +51,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _showZoomWheel = false;
   DateTime _lastZoomInteraction = DateTime.now();
 
-  String _currentMode = 'صورة';
+  String _currentMode = 'PHOTO';
   bool _isRecording = false;
   bool _isAiFocusEnabled = true;
   bool _isTimerActive = false;
@@ -64,7 +64,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   bool _showExpandedPanel = false;
   bool _isHdrActive = true;
-  bool _isWatermarkActive = false;
 
   String _videoResolution = '1080p';
   String _selectedAspectRatio = '4:3';
@@ -174,9 +173,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   }
 
   double get _effectiveMaxZoom {
-    if (_currentMode == 'بورتريه') {
+    if (_currentMode == 'PORTRAIT') {
       return _maxZoom < 2.0 ? _maxZoom : 2.0;
-    } else if (_currentMode == 'فيديو') {
+    } else if (_currentMode == 'VIDEO') {
       return _maxZoom > 10.0 ? 10.0 : _maxZoom;
     }
     return _maxZoom;
@@ -249,7 +248,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   Future<void> _captureAction() async {
     if (controller == null || !controller!.value.isInitialized || _isProcessing) return;
 
-    if (_currentMode == 'فيديو') {
+    if (_currentMode == 'VIDEO') {
       _toggleVideoRecording();
       return;
     }
@@ -271,7 +270,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         setState(() { _isProcessing = true; _showExpandedPanel = false; });
       }
 
-      if (_currentMode == 'صورة ليلية') {
+      if (_currentMode == 'NIGHT') {
         try {
           await controller!.setExposureOffset(_maxAvailableExposureOffset);
         } catch (_) {}
@@ -290,9 +289,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
       if (mounted) {
         setState(() { _isProcessing = false; });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم حفظ الصورة في المعرض بجودة عالية!'), duration: Duration(milliseconds: 600)),
-        );
       }
     } catch (e) {
       debugPrint('Error: $e');
@@ -314,11 +310,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         });
       }
       await Gal.putVideo(file.path);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم حفظ الفيديو في المعرض بنجاح!'), duration: Duration(milliseconds: 600)),
-        );
-      }
     } else {
       await controller!.startVideoRecording();
       if (mounted) {
@@ -371,7 +362,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   Widget build(BuildContext context) {
     if (!isPermissionGranted) {
-      return const Scaffold(body: Center(child: Text('يرجى منح أذونات الكاميرا')));
+      return const Scaffold(body: Center(child: Text('Please grant camera permissions')));
     }
     if (controller == null || !controller!.value.isInitialized) {
       return const Scaffold(backgroundColor: Colors.black, body: Center(child: CircularProgressIndicator(color: Colors.amber)));
@@ -460,7 +451,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                 ),
 
-              if (_currentMode == 'بورتريه')
+              if (_currentMode == 'PORTRAIT')
                 Positioned(
                   top: 100,
                   left: 30,
@@ -483,7 +474,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                 ),
 
-              if (_currentMode == 'بورتريه' && _showApertureSlider)
+              if (_currentMode == 'PORTRAIT' && _showApertureSlider)
                 Positioned(
                   top: 160,
                   left: 20,
@@ -499,7 +490,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          'فتحة العدسة (العزل): f${_selectedAperture.toStringAsFixed(1)}',
+                          'Aperture: f${_selectedAperture.toStringAsFixed(1)}',
                           style: const TextStyle(color: Colors.amber, fontSize: 13, fontWeight: FontWeight.bold),
                         ),
                         const SizedBox(height: 8),
@@ -548,15 +539,15 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                         borderRadius: BorderRadius.circular(20),
                         border: Border.all(color: Colors.amber, width: 1),
                       ),
-                      child: Text(
-                        _currentMode == 'صورة ليلية' ? '🌙 جاري معالجة الصورة الليلية الذكية...' : '✨ جاري التقاط الصورة بدقة عالية...',
-                        style: const TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.bold),
+                      child: const Text(
+                        'Processing HD Image...',
+                        style: TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.bold),
                       ),
                     ),
                   ),
                 ),
 
-              if (_currentMode == 'فيديو')
+              if (_currentMode == 'VIDEO')
                 Positioned(
                   top: 105,
                   left: 0,
@@ -588,7 +579,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                             color: Colors.grey[850],
                             borderRadius: BorderRadius.circular(10),
                           ),
-                          child: const Text('30 إطار/ث', style: TextStyle(color: Colors.redAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                          child: const Text('30fps', style: TextStyle(color: Colors.redAccent, fontSize: 11, fontWeight: FontWeight.bold)),
                         ),
                       ],
                     ),
@@ -689,65 +680,19 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                             ),
                             _buildPanelItem(
                               _isTimerActive ? Icons.timer : Icons.timer_off,
-                              'المؤقت',
+                              'Timer',
                               _isTimerActive,
                               () => setState(() {
                                 _isTimerActive = !_isTimerActive;
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text(_isTimerActive ? 'تم تفعيل المؤقت (3 ثواني)' : 'تم إيقاف المؤقت')),
-                                );
                               }),
-                            ),
-                            _buildPanelItem(
-                              Icons.branding_watermark,
-                              'علامات مائية',
-                              _isWatermarkActive,
-                              () => setState(() => _isWatermarkActive = !_isWatermarkActive),
                             ),
                             _buildPanelItem(
                               Icons.grid_on,
-                              'الشبكة',
+                              'Grid',
                               _isGridActive,
                               () => setState(() {
                                 _isGridActive = !_isGridActive;
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text(_isGridActive ? 'تم تفعيل خطوط الشبكة' : 'تم إيقاف الشبكة')),
-                                );
                               }),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceAround,
-                          children: [
-                            _buildPanelItem(
-                              Icons.center_focus_strong,
-                              'تركيز AI',
-                              _isAiFocusEnabled,
-                              () => setState(() => _isAiFocusEnabled = !_isAiFocusEnabled),
-                            ),
-                            _buildPanelItem(
-                              Icons.help_outline,
-                              'المساعدة',
-                              false,
-                              () {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('كاميرا AI احترافية 2027 - دقة فائقة العالية')),
-                                );
-                              },
-                            ),
-                            _buildPanelItem(
-                              Icons.settings,
-                              'الإعدادات',
-                              false,
-                              () {
-                                setState(() => _showExpandedPanel = false);
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(builder: (context) => const SettingsScreen()),
-                                );
-                              },
                             ),
                           ],
                         ),
@@ -763,12 +708,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    IconButton(
-                      icon: const Icon(Icons.document_scanner_outlined, color: Colors.white, size: 22),
-                      onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ماسح المستندات ورموز QR مفعل')));
-                      },
-                    ),
                     IconButton(
                       icon: Icon(
                         _flashMode == FlashMode.torch ? Icons.flash_on : Icons.flash_off,
@@ -804,12 +743,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: const Text('50M', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.filter_vintage_outlined, color: Colors.white, size: 22),
-                      onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('الفلاتر السينمائية الاحترافية مفعلة')));
-                      },
                     ),
                     GestureDetector(
                       onTap: () {
@@ -942,14 +875,14 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                       height: 30,
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
-                        children: ['فيديو', 'صورة', 'بورتريه', 'صورة ليلية'].map((mode) {
+                        children: ['VIDEO', 'PHOTO', 'PORTRAIT', 'NIGHT'].map((mode) {
                           bool isSelected = _currentMode == mode;
                           return Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 12.0),
                             child: GestureDetector(
                               onTap: () => setState(() {
                                 _currentMode = mode;
-                                if (mode != 'بورتريه') _showApertureSlider = false;
+                                if (mode != 'PORTRAIT') _showApertureSlider = false;
                                 _showExpandedPanel = false;
                               }),
                               child: Text(
@@ -971,14 +904,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
                         GestureDetector(
-                          onTap: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('تم فتح المعرض!'),
-                                duration: Duration(milliseconds: 600),
-                              ),
-                            );
-                          },
+                          onTap: () {},
                           child: Container(
                             height: 48,
                             width: 48,
@@ -1006,7 +932,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                                 width: 63,
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
-                                  color: _currentMode == 'فيديو' && _isRecording 
+                                  color: _currentMode == 'VIDEO' && _isRecording 
                                       ? Colors.red 
                                       : Colors.white,
                                 ),
@@ -1052,88 +978,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
           Text(label, style: TextStyle(color: isActive ? Colors.amber : Colors.white70, fontSize: 11)),
         ],
       ),
-    );
-  }
-}
-
-class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
-
-  @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
-}
-
-class _SettingsScreenState extends State<SettingsScreen> {
-  bool _shutterSound = false;
-  bool _floatingShutter = true;
-  bool _location = false;
-  bool _horizontalLevel = false;
-  bool _smudgedLensAlert = true;
-  bool _scanQr = true;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black,
-        title: const Text('الإعدادات', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_forward, color: Colors.greenAccent),
-          onPressed: () => Navigator.pop(context),
-        ),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          _buildSwitchTile('صوت الالتقاط', Icons.volume_up, _shutterSound, (val) => setState(() => _shutterSound = val)),
-          _buildSwitchTile('استنساخ زر الالتقاط\nتشغيل استنساخ زر الالتقاط تلقائياً عند تدوير هاتفك.', Icons.camera, _floatingShutter, (val) => setState(() => _floatingShutter = val)),
-          _buildSwitchTile('الموقع', Icons.location_on, _location, (val) => setState(() => _location = val)),
-          _buildSwitchTile('المستوى الأفقي', Icons.align_horizontal_center, _horizontalLevel, (val) => setState(() => _horizontalLevel = val)),
-          _buildListTile('قم بتعيين أزرار مستوى الصوت كـ', Icons.phone_android, 'التقاط'),
-          _buildSwitchTile('الإشعار بالعدسات المتسخة', Icons.camera_enhance, _smudgedLensAlert, (val) => setState(() => _smudgedLensAlert = val)),
-          
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 12),
-            child: Text('إعدادات الالتقاط', style: TextStyle(color: Colors.greenAccent, fontSize: 13, fontWeight: FontWeight.bold)),
-          ),
-          
-          _buildListTile('طرق التصوير', Icons.camera_alt, 'إيماءات ووحدات تحكم'),
-          _buildListTile('محسن بورتريه AI تلقائي', Icons.face, 'تلقائي'),
-          _buildSwitchTile('مسح رموز QR', Icons.qr_code_scanner, _scanQr, (val) => setState(() => _scanQr = val)),
-          
-          const SizedBox(height: 20),
-          ListTile(
-            title: const Text('استعادة الإعدادات الافتراضية', style: TextStyle(color: Colors.redAccent, fontSize: 14)),
-            leading: const Icon(Icons.restore, color: Colors.redAccent),
-            onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم استعادة الإعدادات الافتراضية بنجاح')));
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSwitchTile(String title, IconData icon, bool value, ValueChanged<bool> onChanged) {
-    return SwitchListTile(
-      secondary: Icon(icon, color: Colors.white70),
-      title: Text(title, style: const TextStyle(color: Colors.white, fontSize: 14)),
-      value: value,
-      activeColor: Colors.greenAccent,
-      onChanged: onChanged,
-    );
-  }
-
-  Widget _buildListTile(String title, IconData icon, String subtitle) {
-    return ListTile(
-      leading: Icon(icon, color: Colors.white70),
-      title: Text(title, style: const TextStyle(color: Colors.white, fontSize: 14)),
-      subtitle: Text(subtitle, style: const TextStyle(color: Colors.white54, fontSize: 12)),
-      trailing: const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 14),
-      onTap: () {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم فتح إعدادات: $title')));
-      },
     );
   }
 }
