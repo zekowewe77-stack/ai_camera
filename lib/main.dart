@@ -12,7 +12,7 @@ Future<void> main() async {
   try {
     cameras = await availableCameras();
   } catch (e) {
-    print('Error initializing cameras: $e');
+    debugPrint('Error initializing cameras: $e');
   }
   runApp(const CameraApp());
 }
@@ -51,7 +51,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _showZoomWheel = false;
   DateTime _lastZoomInteraction = DateTime.now();
 
-  // الأوضاع الأساسية
   String _currentMode = 'PHOTO';
   bool _isRecording = false;
   bool _isLiveEnabled = true;
@@ -60,16 +59,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _isShutterSoundOn = true;
   bool _isProcessing = false;
 
-  // إعدادات الفيديو الحقيقية (1080p, 2K, 4K بـ 30fps)
   String _videoResolution = '1080p';
-  String _selectedAspectRatio = '4:3';
+  final String _selectedAspectRatio = '4:3';
 
-  // تحكم البورتريه وفتحة العدسة (f1.4 إلى f16)
   bool _showApertureSlider = false;
   double _selectedAperture = 4.0;
   final List<double> _apertureValues = [1.4, 2.0, 2.8, 4.0, 5.6, 8.0, 11.0, 16.0];
   
-  // التركيز وتحديد الوجه الديناميكي
   bool _showFocusBox = false;
   Offset _focusPoint = Offset.zero;
   double _exposureOffset = 0.0;
@@ -115,7 +111,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     await Gal.requestAccess();
 
     if (await Permission.camera.isGranted) {
-      setState(() { isPermissionGranted = true; });
+      if (mounted) setState(() { isPermissionGranted = true; });
       if (cameras.isNotEmpty) _initCamera(selectedCameraIndex);
     }
   }
@@ -153,7 +149,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
       if (mounted) setState(() {});
     } catch (e) {
-      print('Error initializing cameras: $e');
+      debugPrint('Error initializing camera: $e');
     }
   }
 
@@ -181,7 +177,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     try {
       await controller!.setFlashMode(_flashMode);
     } catch (e) {
-      print(e);
+      debugPrint('$e');
     }
   }
 
@@ -203,7 +199,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       await controller!.setFocusPoint(offset);
       await controller!.setExposurePoint(offset);
     } catch (e) {
-      print(e);
+      debugPrint('$e');
     }
 
     Future.delayed(const Duration(seconds: 3), () {
@@ -232,7 +228,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     try {
       await controller!.setExposureOffset(_exposureOffset);
     } catch (e) {
-      print(e);
+      debugPrint('$e');
     }
   }
 
@@ -268,7 +264,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
           await controller!.setExposureOffset(0.0);
         } catch (_) {}
         
-        setState(() { _isProcessing = false; });
+        if (mounted) setState(() { _isProcessing = false; });
       } 
       else if (_isLiveEnabled && _currentMode == 'PHOTO') {
         final image = await controller!.takePicture();
@@ -308,11 +304,11 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       } else {
         final image = await controller!.takePicture();
         await Gal.putImage(image.path);
-        setState(() { _isProcessing = false; });
+        if (mounted) setState(() { _isProcessing = false; });
       }
     } catch (e) {
-      print('Error capturing: $e');
-      setState(() { _isProcessing = false; });
+      debugPrint('Error capturing: $e');
+      if (mounted) setState(() { _isProcessing = false; });
     }
   }
 
@@ -421,7 +417,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
-              // مربع تركيز الوجه الأبيض عند الضغط أو التحديد
               if (_showFocusBox && _isAiFocusEnabled)
                 Positioned(
                   left: _focusPoint.dx - 80,
@@ -436,7 +431,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                 ),
 
-              // زر فتحة العدسة للبورتريه على اليسار
               if (_currentMode == 'PORTRAIT')
                 Positioned(
                   top: 100,
@@ -459,7 +453,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                 ),
 
-              // شريط فتحة العدسة
               if (_currentMode == 'PORTRAIT' && _showApertureSlider)
                 Positioned(
                   top: 160,
@@ -533,7 +526,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                 ),
 
-              // خيارات الفيديو (1080p, 2K, 4K)
               if (_currentMode == 'VIDEO')
                 Positioned(
                   top: 90,
@@ -574,7 +566,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                 ),
 
-              // أداة ضبط الإضاءة والتعريض الموضعي
               if (_showFocusBox)
                 Positioned(
                   right: 20,
@@ -623,7 +614,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 },
               ),
 
-              // الشريط العلوي مع زر "تركيز AI"
               Positioned(
                 top: 40,
                 left: 15,
@@ -799,7 +789,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
-              // الأوضاع الأربعة السفلى
               Positioned(
                 bottom: 60,
                 left: 0,
