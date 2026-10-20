@@ -4,6 +4,7 @@ import 'package:camera/camera.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:gal/gal.dart';
 import 'dart:async';
+import 'dart:io';
 
 List<CameraDescription> cameras = [];
 
@@ -64,6 +65,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   bool _showExpandedPanel = false;
   bool _isHdrActive = true;
+  bool _isWatermarkActive = false;
 
   String _videoResolution = '1080p';
   String _selectedAspectRatio = '4:3';
@@ -117,12 +119,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     await Gal.requestAccess();
 
     if (await Permission.camera.isGranted) {
-      if (mounted) {
-        setState(() { isPermissionGranted = true; });
-      }
-      if (cameras.isNotEmpty) {
-        _initCamera(selectedCameraIndex);
-      }
+      if (mounted) setState(() { isPermissionGranted = true; });
+      if (cameras.isNotEmpty) _initCamera(selectedCameraIndex);
     }
   }
 
@@ -157,11 +155,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       _maxAvailableExposureOffset = await controller!.getMaxExposureOffset();
       _exposureOffset = 0.0;
 
-      if (mounted) {
-        setState(() {});
-      }
+      if (mounted) setState(() {});
     } catch (e) {
-      debugPrint('Error: $e');
+      debugPrint('Error initializing camera: $e');
     }
   }
 
@@ -266,9 +262,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       SystemSound.play(SystemSoundType.click);
       HapticFeedback.heavyImpact();
 
-      if (mounted) {
-        setState(() { _isProcessing = true; _showExpandedPanel = false; });
-      }
+      setState(() { _isProcessing = true; _showExpandedPanel = false; });
 
       if (_currentMode == 'NIGHT') {
         try {
@@ -289,12 +283,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
       if (mounted) {
         setState(() { _isProcessing = false; });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Saved to gallery successfully!'), duration: Duration(milliseconds: 600)),
+        );
       }
     } catch (e) {
-      debugPrint('Error: $e');
-      if (mounted) {
-        setState(() { _isProcessing = false; });
-      }
+      debugPrint('Error capturing: $e');
+      if (mounted) setState(() { _isProcessing = false; });
     }
   }
 
@@ -303,27 +298,26 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     if (_isRecording) {
       _videoTimer?.cancel();
       final file = await controller!.stopVideoRecording();
-      if (mounted) {
-        setState(() { 
-          _isRecording = false; 
-          _videoSeconds = 0;
-        });
-      }
+      setState(() { 
+        _isRecording = false; 
+        _videoSeconds = 0;
+      });
       await Gal.putVideo(file.path);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Video saved successfully!'), duration: Duration(milliseconds: 600)),
+        );
+      }
     } else {
       await controller!.startVideoRecording();
-      if (mounted) {
-        setState(() { 
-          _isRecording = true; 
-          _videoSeconds = 0;
-        });
-      }
+      setState(() { 
+        _isRecording = true; 
+        _videoSeconds = 0;
+      });
       _videoTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-        if (mounted) {
-          setState(() {
-            _videoSeconds++;
-          });
-        }
+        setState(() {
+          _videoSeconds++;
+        });
       });
     }
   }
@@ -353,7 +347,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   void dispose() {
     _videoTimer?.cancel();
-    WidgetsBinding.instance.removeObserver(this);
+    WidgetsBinding.instance.addObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
@@ -539,9 +533,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                         borderRadius: BorderRadius.circular(20),
                         border: Border.all(color: Colors.amber, width: 1),
                       ),
-                      child: const Text(
-                        'Processing HD Image...',
-                        style: TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.bold),
+                      child: Text(
+                        _currentMode == 'NIGHT' ? '🌙 Processing Night Mode...' : '✨ Capturing High Quality...',
+                        style: const TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.bold),
                       ),
                     ),
                   ),
@@ -687,12 +681,42 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                               }),
                             ),
                             _buildPanelItem(
+                              Icons.branding_watermark,
+                              'Watermark',
+                              _isWatermarkActive,
+                              () => setState(() => _isWatermarkActive = !_isWatermarkActive),
+                            ),
+                            _buildPanelItem(
                               Icons.grid_on,
                               'Grid',
                               _isGridActive,
                               () => setState(() {
                                 _isGridActive = !_isGridActive;
                               }),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceAround,
+                          children: [
+                            _buildPanelItem(
+                              Icons.center_focus_strong,
+                              'AI Focus',
+                              _isAiFocusEnabled,
+                              () => setState(() => _isAiFocusEnabled = !_isAiFocusEnabled),
+                            ),
+                            _buildPanelItem(
+                              Icons.settings,
+                              'Settings',
+                              false,
+                              () {
+                                setState(() => _showExpandedPanel = false);
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(builder: (context) => const SettingsScreen()),
+                                );
+                              },
                             ),
                           ],
                         ),
@@ -708,6 +732,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
+                    IconButton(
+                      icon: const Icon(Icons.document_scanner_outlined, color: Colors.white, size: 22),
+                      onPressed: () {},
+                    ),
                     IconButton(
                       icon: Icon(
                         _flashMode == FlashMode.torch ? Icons.flash_on : Icons.flash_off,
@@ -976,6 +1004,38 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
           ),
           const SizedBox(height: 6),
           Text(label, style: TextStyle(color: isActive ? Colors.amber : Colors.white70, fontSize: 11)),
+        ],
+      ),
+    );
+  }
+}
+
+class SettingsScreen extends StatelessWidget {
+  const SettingsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        title: const Text('Settings'),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: const [
+          ListTile(
+            title: Text('Shutter Sound'),
+            trailing: Icon(Icons.arrow_forward_ios, size: 14),
+          ),
+          ListTile(
+            title: Text('Location Watermark'),
+            trailing: Icon(Icons.arrow_forward_ios, size: 14),
+          ),
+          ListTile(
+            title: Text('Grid Lines'),
+            trailing: Icon(Icons.arrow_forward_ios, size: 14),
+          ),
         ],
       ),
     );
