@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:gal/gal.dart';
+import 'dart:async';
 import 'dart:io';
 
 List<CameraDescription> cameras = [];
@@ -53,13 +54,16 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   String _currentMode = 'PHOTO';
   bool _isRecording = false;
-  bool _isLiveEnabled = true;
+  bool _isLiveEnabled = true; // زر Live Auto المطلوب
   bool _isAiFocusEnabled = true;
   bool _isTimerActive = false;
   bool _isShutterSoundOn = true;
   bool _isProcessing = false;
 
-  // إعدادات لوحة التحكم المنسدلة (مطابقة للصورة الثانية 37908.png)
+  // عداد وقتاً لتسجيل الفيديو (مطابق للصورة الثانية 38013.png)
+  Timer? _videoTimer;
+  int _videoSeconds = 0;
+
   bool _showExpandedPanel = false;
   bool _isHdrActive = true;
   bool _isWatermarkActive = false;
@@ -199,7 +203,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       _showFocusBox = true;
       _focusPoint = details.localPosition;
       _lastFocusTime = DateTime.now();
-      _showExpandedPanel = false; // إخفاء اللوحة عند الضغط للتصوير أو التركيز
+      _showExpandedPanel = false;
     });
 
     try {
@@ -322,13 +326,33 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   Future<void> _toggleVideoRecording() async {
     if (controller == null || !controller!.value.isInitialized) return;
     if (_isRecording) {
+      _videoTimer?.cancel();
       final file = await controller!.stopVideoRecording();
-      setState(() { _isRecording = false; });
+      setState(() { 
+        _isRecording = false; 
+        _videoSeconds = 0;
+      });
       await Gal.putVideo(file.path);
     } else {
       await controller!.startVideoRecording();
-      setState(() { _isRecording = true; });
+      setState(() { 
+        _isRecording = true; 
+        _videoSeconds = 0;
+      });
+      _videoTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        setState(() {
+          _videoSeconds++;
+        });
+      });
     }
+  }
+
+  String _formatVideoTime(int seconds) {
+    int minutes = seconds ~/ 60;
+    int remainingSeconds = seconds % 60;
+    String minStr = minutes.toString().padLeft(2, '0');
+    String secStr = remainingSeconds.toString().padLeft(2, '0');
+    return "00:$minStr:$secStr";
   }
 
   double _getAspectRatioValue() {
@@ -347,6 +371,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   @override
   void dispose() {
+    _videoTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
@@ -424,7 +449,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
-              // الشبكة (Grid Overlay) إذا كانت مفعلة من القائمة المنسدلة
               if (_isGridActive)
                 Positioned.fill(
                   child: IgnorePointer(
@@ -587,6 +611,27 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                 ),
 
+              // مؤشر وقت تسجيل الفيديو الأحمر (مطابق للصورة الثانية 38013.png)
+              if (_isRecording)
+                Positioned(
+                  top: 90,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.red,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Text(
+                        _formatVideoTime(_videoSeconds),
+                        style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 1.2),
+                      ),
+                    ),
+                  ),
+                ),
+
               if (_showFocusBox)
                 Positioned(
                   right: 20,
@@ -635,7 +680,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 },
               ),
 
-              // لوحة الخيارات المنسدلة (مطابقة للصورة الثانية 37908.png عند الضغط على سهم الإنزال)
               if (_showExpandedPanel)
                 Positioned(
                   top: 90,
@@ -719,7 +763,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                 ),
 
-              // الشريط العلوي (مطابق للصورة الأولى 37909.png)
+              // الشريط العلوي مع زر Live Auto والصورة الأولى (38016.png)
               Positioned(
                 top: 40,
                 left: 15,
@@ -727,11 +771,30 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    IconButton(
-                      icon: const Icon(Icons.document_scanner_outlined, color: Colors.white, size: 22),
-                      onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ماسح ذكي مفعل')));
+                    // زر Live Auto (الصورة المتحركة)
+                    GestureDetector(
+                      onTap: () {
+                        setState(() { _isLiveEnabled = !_isLiveEnabled; });
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(_isLiveEnabled ? '✨ Live Motion Photo: ON' : 'Live Photo: OFF'),
+                            duration: const Duration(milliseconds: 400),
+                          ),
+                        );
                       },
+                      child: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: _isLiveEnabled ? Colors.amber.withOpacity(0.3) : Colors.black54,
+                          border: Border.all(color: _isLiveEnabled ? Colors.amber : Colors.white24),
+                        ),
+                        child: Icon(
+                          _isLiveEnabled ? Icons.motion_photos_on : Icons.motion_photos_off,
+                          color: _isLiveEnabled ? Colors.amber : Colors.white,
+                          size: 20,
+                        ),
+                      ),
                     ),
                     IconButton(
                       icon: Icon(
@@ -741,7 +804,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                       ),
                       onPressed: _toggleFlash,
                     ),
-                    // زر السهم المنسدل (∨) المنتصف للوحة الإعدادات السريعة
                     GestureDetector(
                       onTap: () {
                         setState(() {
@@ -827,7 +889,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                                 _currentZoom = val;
                                 _lastZoomInteraction = DateTime.now();
                               });
-                              await controller!.setZoomLevel(val);
+                              await controller!.setZoomLevel(_currentZoom);
                             },
                           ),
                         ],
@@ -971,6 +1033,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                                 width: 63,
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
+                                  // زر التقاط الفيديو يتحول إلى اللون الأحمر أثناء التسجيل (مطابق للصورة الثانية 38013.png)
                                   color: _currentMode == 'VIDEO' && _isRecording 
                                       ? Colors.red 
                                       : Colors.white,
@@ -1021,7 +1084,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   }
 }
 
-// صفحة الإعدادات الشاملة (مطابقة للصورة الثالثة 37906.png)
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
