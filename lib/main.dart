@@ -13,7 +13,7 @@ Future<void> main() async {
   try {
     cameras = await availableCameras();
   } catch (e) {
-    debugPrint('Error initializing cameras: $e');
+    debugPrint('خطأ في تهيئة الكاميرات: $e');
   }
   runApp(const CameraApp());
 }
@@ -25,7 +25,7 @@ class CameraApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'iPhone S25 Pro Camera',
+      title: 'كاميرا AI احترافية 2027',
       theme: ThemeData.dark(),
       home: const CameraScreen(),
     );
@@ -52,14 +52,14 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _showZoomWheel = false;
   DateTime _lastZoomInteraction = DateTime.now();
 
-  String _currentMode = 'PHOTO';
+  String _currentMode = 'صورة'; // الأوضاع بالعربية: فيديو، صورة، بورتريه، صورة ليلية
   bool _isRecording = false;
   bool _isAiFocusEnabled = true;
-  bool _isTimerActive = false; // مؤقت حقيقي
-  bool _isGridActive = false; // شبكة حقيقية
+  bool _isTimerActive = false;
+  bool _isGridActive = false;
   bool _isShutterSoundOn = true;
   bool _isProcessing = false;
-  int _countdownSeconds = 0; // عداد التنازلي للمؤقت
+  int _countdownSeconds = 0;
 
   Timer? _videoTimer;
   int _videoSeconds = 0;
@@ -158,7 +158,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
       if (mounted) setState(() {});
     } catch (e) {
-      debugPrint('Error initializing camera: $e');
+      debugPrint('خطأ أثناء تهيئة الكاميرا: $e');
     }
   }
 
@@ -170,9 +170,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   }
 
   double get _effectiveMaxZoom {
-    if (_currentMode == 'PORTRAIT') {
+    if (_currentMode == 'بورتريه') {
       return _maxZoom < 2.0 ? _maxZoom : 2.0;
-    } else if (_currentMode == 'VIDEO') {
+    } else if (_currentMode == 'فيديو') {
       return _maxZoom > 10.0 ? 10.0 : _maxZoom;
     }
     return _maxZoom;
@@ -242,11 +242,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // التقاط الصورة بدقة عالية وفورية مع تفعيل المؤقت الحقيقي
   Future<void> _captureAction() async {
     if (controller == null || !controller!.value.isInitialized || _isProcessing) return;
 
-    if (_currentMode == 'VIDEO') {
+    if (_currentMode == 'فيديو') {
       _toggleVideoRecording();
       return;
     }
@@ -269,7 +268,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
       setState(() { _isProcessing = true; _showExpandedPanel = false; });
 
-      if (_currentMode == 'NIGHT') {
+      if (_currentMode == 'صورة ليلية') {
         try {
           await controller!.setExposureOffset(_maxAvailableExposureOffset);
         } catch (_) {}
@@ -293,7 +292,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         );
       }
     } catch (e) {
-      debugPrint('Error capturing: $e');
+      debugPrint('خطأ في الالتقاط: $e');
       if (mounted) setState(() { _isProcessing = false; });
     }
   }
@@ -361,7 +360,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   Widget build(BuildContext context) {
     if (!isPermissionGranted) {
-      return const Scaffold(body: Center(child: Text('Please grant camera permissions')));
+      return const Scaffold(body: Center(child: Text('يرجى منح أذونات الكاميرا')));
     }
     if (controller == null || !controller!.value.isInitialized) {
       return const Scaffold(backgroundColor: Colors.black, body: Center(child: CircularProgressIndicator(color: Colors.amber)));
@@ -369,7 +368,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
 
-    // معاينة نقية وحادة تماماً بدون فلاتر تظليل مشوهة
     Widget previewWidget = AspectRatio(
       aspectRatio: _getAspectRatioValue(),
       child: Transform(
@@ -414,7 +412,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
-              // خطوط الشبكة الحقيقية عند التفعيل
               if (_isGridActive)
                 Positioned.fill(
                   child: IgnorePointer(
@@ -428,7 +425,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                 ),
 
-              // عداد المؤقت التنازلي على الشاشة
               if (_countdownSeconds > 0)
                 Positioned.fill(
                   child: Center(
@@ -453,7 +449,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                 ),
 
-              if (_currentMode == 'PORTRAIT')
+              if (_currentMode == 'بورتريه')
                 Positioned(
                   top: 100,
                   left: 30,
@@ -476,7 +472,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                 ),
 
-              if (_currentMode == 'PORTRAIT' && _showApertureSlider)
+              if (_currentMode == 'بورتريه' && _showApertureSlider)
                 Positioned(
                   top: 160,
                   left: 20,
@@ -492,7 +488,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          'فتحة العدسة (Aperture): f${_selectedAperture.toStringAsFixed(1)}',
+                          'فتحة العدسة (العزل): f${_selectedAperture.toStringAsFixed(1)}',
                           style: const TextStyle(color: Colors.amber, fontSize: 13, fontWeight: FontWeight.bold),
                         ),
                         const SizedBox(height: 8),
@@ -542,15 +538,14 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                         border: Border.all(color: Colors.amber, width: 1),
                       ),
                       child: Text(
-                        _currentMode == 'NIGHT' ? '🌙 معالجة الصورة الليلية الذكية...' : '✨ جاري التقاط الصورة بدقة عالية...',
+                        _currentMode == 'صورة ليلية' ? '🌙 جاري معالجة الصورة الليلية الذكية...' : '✨ جاري التقاط الصورة بدقة عالية...',
                         style: const TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.bold),
                       ),
                     ),
                   ),
                 ),
 
-              // شريط دقة الفيديو (مرتب أسفل الشريط العلوي لعدم التداخل مع العداد الأحمر)
-              if (_currentMode == 'VIDEO')
+              if (_currentMode == 'فيديو')
                 Positioned(
                   top: 105,
                   left: 0,
@@ -582,14 +577,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                             color: Colors.grey[850],
                             borderRadius: BorderRadius.circular(10),
                           ),
-                          child: const Text('30fps', style: TextStyle(color: Colors.redAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                          child: const Text('30 إطار/ث', style: TextStyle(color: Colors.redAccent, fontSize: 11, fontWeight: FontWeight.bold)),
                         ),
                       ],
                     ),
                   ),
                 ),
 
-              // عداد وقتاً لتسجيل الفيديو الأحمر (مطابق للصورة تماماً)
               if (_isRecording)
                 Positioned(
                   top: 95,
@@ -658,7 +652,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 },
               ),
 
-              // لوحة الخيارات المنسدلة (تفعيل حقيقي للمؤقت والشبكة)
               if (_showExpandedPanel)
                 Positioned(
                   top: 90,
@@ -729,7 +722,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                               false,
                               () {
                                 ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('كاميرة S25 Pro الاحترافية - دقة فلاجشيب')),
+                                  const SnackBar(content: Text('كاميرا AI احترافية 2027 - دقة فائقة العالية')),
                                 );
                               },
                             ),
@@ -752,7 +745,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                 ),
 
-              // الشريط العلوي الاحترافي
               Positioned(
                 top: 40,
                 left: 15,
@@ -763,7 +755,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                     IconButton(
                       icon: const Icon(Icons.document_scanner_outlined, color: Colors.white, size: 22),
                       onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ماسح المستندات والـ QR مفعل')));
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ماسح المستندات ورموز QR مفعل')));
                       },
                     ),
                     IconButton(
@@ -939,18 +931,18 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                       height: 30,
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
-                        children: ['VIDEO', 'PHOTO', 'PORTRAIT', 'NIGHT'].map((mode) {
+                        children: ['فيديو', 'صورة', 'بورتريه', 'صورة ليلية'].map((mode) {
                           bool isSelected = _currentMode == mode;
                           return Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 12.0),
                             child: GestureDetector(
                               onTap: () => setState(() {
                                 _currentMode = mode;
-                                if (mode != 'PORTRAIT') _showApertureSlider = false;
+                                if (mode != 'بورتريه') _showApertureSlider = false;
                                 _showExpandedPanel = false;
                               }),
                               child: Text(
-                                mode == 'NIGHT' ? 'صورة ليلية' : mode,
+                                mode,
                                 style: TextStyle(
                                   color: isSelected ? Colors.amber : Colors.white60,
                                   fontWeight: FontWeight.bold,
@@ -1003,8 +995,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                                 width: 63,
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
-                                  // زر التقاط الفيديو يتحول إلى اللون الأحمر أثناء التسجيل
-                                  color: _currentMode == 'VIDEO' && _isRecording 
+                                  color: _currentMode == 'فيديو' && _isRecording 
                                       ? Colors.red 
                                       : Colors.white,
                                 ),

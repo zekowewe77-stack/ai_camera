@@ -1,5 +1,5 @@
-name: ai_camera
-description: "A new Flutter camera application with AI capabilities and video support."
+name: iphone_s25_camera
+description: "AI Camera Pro 2027 Application"
 publish_to: 'none'
 
 version: 1.0.0+1
@@ -10,18 +10,24 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-
-  # المكتبات الخاصة بالكاميرا والميديا والمعرض
   camera: ^0.10.5+9
   permission_handler: ^11.3.1
   gal: ^2.3.0
-  path_provider: ^2.1.2
-  cupertino_icons: ^1.0.6
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^3.0.0
+  flutter_launcher_icons: ^0.13.1
+
+# إعدادات أيقونة التطبيق الاحترافية 2027
+flutter_launcher_icons:
+  android: "ic_launcher"
+  ios: true
+  image_path: "assets/icon.png"
+  min_sdk_android: 21
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/icon.png
