@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:gal/gal.dart';
+import 'package:open_file/open_file.dart';
 import 'dart:io';
 
 List<CameraDescription> cameras = [];
@@ -59,7 +60,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _isFilterActive = false;
   bool _showTopControlsMenu = false;
   bool _isShutterSoundOn = true;
-  
+  bool _isProcessing = false; // مؤشر جاري المعالجة السريع
+  String? _lastCapturedPath; // مسار آخر صورة للفتح السريع من المعرض
+
   String _selectedAspectRatio = '4:3';
   
   bool _showFocusBox = false;
@@ -204,8 +207,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
+  // التقاط فوري بدون أي تعليق، والمعالجة تتم بسلاسة
   Future<void> _captureAction() async {
-    if (controller == null || !controller!.value.isInitialized) return;
+    if (controller == null || !controller!.value.isInitialized || _isProcessing) return;
 
     if (_currentMode == 'VIDEO' || _currentMode == 'SLO-MO') {
       _toggleVideoRecording();
@@ -220,38 +224,49 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         HapticFeedback.heavyImpact();
       }
 
+      setState(() { _isProcessing = true; });
+
+      // التقاط الصورة الفورية فوراً لتظهر في ساعتها
+      final image = await controller!.takePicture();
+      await Gal.putImage(image.path);
+      
+      setState(() {
+        _lastCapturedPath = image.path;
+        _isProcessing = false;
+      });
+
+      // إذا كانت الصورة الحية مفعلة، نقوم بمعالجتها في الخلفية بدون تجميد الكاميرا
       if (_isLiveEnabled) {
-        await controller!.startVideoRecording();
-        await Future.delayed(const Duration(milliseconds: 1200)); 
-        final liveVideo = await controller!.stopVideoRecording();
-        
-        final image = await controller!.takePicture();
+        Future.microtask(() async {
+          try {
+            await controller!.startVideoRecording();
+            await Future.delayed(const Duration(milliseconds: 800));
+            final liveVideo = await controller!.stopVideoRecording();
+            
+            File imgFile = File(image.path);
+            File vidFile = File(liveVideo.path);
+            
+            if (await imgFile.exists() && await vidFile.exists()) {
+              List<int> imageBytes = await imgFile.readAsBytes();
+              List<int> videoBytes = await vidFile.readAsBytes();
 
-        File imgFile = File(image.path);
-        File vidFile = File(liveVideo.path);
-        
-        List<int> imageBytes = await imgFile.readAsBytes();
-        List<int> videoBytes = await vidFile.readAsBytes();
+              List<int> motionPhotoBytes = []
+                ..addAll(imageBytes)
+                ..addAll(videoBytes);
 
-        List<int> motionPhotoBytes = []
-          ..addAll(imageBytes)
-          ..addAll(videoBytes);
+              String motionPath = image.path.replaceAll('.jpg', '_live.jpg');
+              File motionFile = File(motionPath);
+              await motionFile.writeAsBytes(motionPhotoBytes);
 
-        String motionPath = image.path.replaceAll('.jpg', '_motion.jpg');
-        File motionFile = File(motionPath);
-        await motionFile.writeAsBytes(motionPhotoBytes);
-
-        await Gal.putImage(motionFile.path);
-      } else {
-        final image = await controller!.takePicture();
-        await Gal.putImage(image.path);
+              await Gal.putImage(motionFile.path);
+              setState(() { _lastCapturedPath = motionFile.path; });
+            }
+          } catch (_) {}
+        });
       }
     } catch (e) {
       print('Error capturing: $e');
-      try {
-        final image = await controller!.takePicture();
-        await Gal.putImage(image.path);
-      } catch (_) {}
+      setState(() { _isProcessing = false; });
     }
   }
 
@@ -261,9 +276,21 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       final file = await controller!.stopVideoRecording();
       setState(() { _isRecording = false; });
       await Gal.putVideo(file.path);
+      setState(() { _lastCapturedPath = file.path; });
     } else {
       await controller!.startVideoRecording();
       setState(() { _isRecording = true; });
+    }
+  }
+
+  // فتح آخر صورة تم التقاطها بضغطة واحدة من زر المعرض على الشمال
+  Future<void> _openLastGalleryItem() async {
+    if (_lastCapturedPath != null && await File(_lastCapturedPath!).exists()) {
+      await OpenFile.open(_lastCapturedPath!);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('التقط صورة أولاً لفتحها!'), duration: Duration(milliseconds: 600)),
+      );
     }
   }
 
@@ -352,6 +379,28 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
+              // مؤشر جاري المعالجة الاحترافي
+              if (_isProcessing)
+                Positioned(
+                  top: 130,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: Colors.amber.withOpacity(0.5)),
+                      ),
+                      child: const Text(
+                        'جاري المعالجة...',
+                        style: TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                ),
+
               if (_showFocusBox)
                 Positioned(
                   left: _focusPoint.dx - 35,
@@ -402,6 +451,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 },
               ),
 
+              // الشريط العلوي
               Positioned(
                 top: 40,
                 left: 15,
@@ -471,6 +521,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
+              // سهم القائمة المنسدلة
               Positioned(
                 top: 78,
                 left: 0,
@@ -636,6 +687,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
+              // الشريط السفلي (مع تفعيل زر المعرض الأيسر لفتح آخر صورة فوراً)
               Positioned(
                 bottom: 60,
                 left: 0,
@@ -672,15 +724,27 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
-                        Container(
-                          height: 48,
-                          width: 48,
-                          decoration: BoxDecoration(
-                            color: Colors.grey[900],
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.white30, width: 1.5),
+                        // زر المعرض على الشمال لفتح آخر صورة فوراً بضغطة واحدة
+                        GestureDetector(
+                          onTap: _openLastGalleryItem,
+                          child: Container(
+                            height: 48,
+                            width: 48,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[900],
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.white30, width: 1.5),
+                              image: _lastCapturedPath != null && File(_lastCapturedPath!).existsSync()
+                                  ? DecorationImage(
+                                      image: FileImage(File(_lastCapturedPath!)),
+                                      fit: BoxFit.cover,
+                                    )
+                                  : null,
+                            ),
+                            child: _lastCapturedPath == null
+                                ? const Icon(Icons.photo, color: Colors.white, size: 24)
+                                : null,
                           ),
-                          child: const Icon(Icons.photo, color: Colors.white, size: 24),
                         ),
 
                         GestureDetector(
