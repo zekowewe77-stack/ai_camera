@@ -62,7 +62,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   
   String _selectedAspectRatio = '4:3';
   
-  // متغيرات التركيز والتحكم بالإضاءة بالسحب الفوري
   bool _showFocusBox = false;
   Offset _focusPoint = Offset.zero;
   double _exposureOffset = 0.0;
@@ -222,13 +221,28 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       }
 
       if (_isLiveEnabled) {
-        // آلية الصورة الحية (Live Photo / Motion Photo) الحقيقية
         await controller!.startVideoRecording();
-        await Future.delayed(const Duration(milliseconds: 1200)); // تسجيل مقطع الحركة الحية لتيك توك
+        await Future.delayed(const Duration(milliseconds: 1200)); 
         final liveVideo = await controller!.stopVideoRecording();
-        await Gal.putVideo(liveVideo.path); // الحفظ في المعرض كصورة/فيديو حي متحرك
+        
+        final image = await controller!.takePicture();
+
+        File imgFile = File(image.path);
+        File vidFile = File(liveVideo.path);
+        
+        List<int> imageBytes = await imgFile.readAsBytes();
+        List<int> videoBytes = await vidFile.readAsBytes();
+
+        List<int> motionPhotoBytes = []
+          ..addAll(imageBytes)
+          ..addAll(videoBytes);
+
+        String motionPath = image.path.replaceAll('.jpg', '_motion.jpg');
+        File motionFile = File(motionPath);
+        await motionFile.writeAsBytes(motionPhotoBytes);
+
+        await Gal.putImage(motionFile.path);
       } else {
-        // التقاط صورة ثابتة عادية
         final image = await controller!.takePicture();
         await Gal.putImage(image.path);
       }
@@ -286,7 +300,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
 
-    // معالجة بصرية ذكية لتجميل الصورة ونقاء البشرة وتفتيح الإضاءة تلقائياً
     Widget previewWidget = AspectRatio(
       aspectRatio: _getAspectRatioValue(),
       child: ColorFiltered(
@@ -339,7 +352,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
-              // دايرة التركيز ومؤشر الإضاءة الخضراء
               if (_showFocusBox)
                 Positioned(
                   left: _focusPoint.dx - 35,
@@ -379,7 +391,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                 ),
 
-              // تأثير ومضة الالتقاط البيضاء
               AnimatedBuilder(
                 animation: _flashAnimation,
                 builder: (context, child) {
@@ -391,7 +402,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 },
               ),
 
-              // الشريط العلوي
               Positioned(
                 top: 40,
                 left: 15,
@@ -461,7 +471,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
-              // سهم القائمة المنسدلة
               Positioned(
                 top: 78,
                 left: 0,
@@ -480,7 +489,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
-              // قائمة الإعدادات المنسدلة
               if (_showTopControlsMenu)
                 Positioned(
                   top: 110,
@@ -527,7 +535,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                 ),
 
-              // عجلة الزووم الدائرية
               if (_showZoomWheel)
                 Positioned(
                   bottom: 235,
@@ -569,7 +576,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   ),
                 ),
 
-              // أزرار التكبير الثابتة
               Positioned(
                 bottom: 195,
                 left: 0,
@@ -630,7 +636,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
-              // الشريط السفلي
               Positioned(
                 bottom: 60,
                 left: 0,
