@@ -54,7 +54,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   String _currentMode = 'PHOTO';
   bool _isRecording = false;
   bool _isLiveEnabled = true;
-  bool _isHdrPlusEnabled = true; // مفعل دائمًا لضمان أعلى جودة
+  bool _isHdrPlusEnabled = true;
   bool _isTimerActive = false;
   bool _isFilterActive = false;
   bool _showTopControlsMenu = false;
@@ -205,7 +205,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // التقاط فوري فائق السرعة مع تفعيل الـ Live Photo في الخلفية
+  // الالتقاط السريع وحفظ ملف موحد للـ Motion Photo بدون تكرار أو تهنيج
   Future<void> _captureAction() async {
     if (controller == null || !controller!.value.isInitialized || _isProcessing) return;
 
@@ -224,14 +224,11 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
       setState(() { _isProcessing = true; });
 
-      // التقاط الصورة الفورية الأساسية وظهورها في المعرض فوراً
-      final image = await controller!.takePicture();
-      await Gal.putImage(image.path);
-      
-      setState(() { _isProcessing = false; });
-
-      // معالجة الصورة الحية (Live Motion Photo) في الخلفية باحترافية
       if (_isLiveEnabled) {
+        // 1. التقاط الصورة الأساسية فوراً
+        final image = await controller!.takePicture();
+        
+        // 2. تسجيل كليب الحركة في الخلفية بدون تجميد الواجهة
         Future.microtask(() async {
           try {
             await controller!.startVideoRecording();
@@ -245,18 +242,33 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               List<int> imageBytes = await imgFile.readAsBytes();
               List<int> videoBytes = await vidFile.readAsBytes();
 
+              // دمج الصورة والفيديو في ملف واحد فقط بتركيب Motion Photo
               List<int> motionPhotoBytes = []
                 ..addAll(imageBytes)
                 ..addAll(videoBytes);
 
-              String motionPath = image.path.replaceAll('.jpg', '_live.jpg');
+              String motionPath = image.path.replaceAll('.jpg', '_MP.jpg');
               File motionFile = File(motionPath);
               await motionFile.writeAsBytes(motionPhotoBytes);
 
+              // حفظ الملف المدمج الوحيد في المعرض وحذف الملفات المؤقتة
               await Gal.putImage(motionFile.path);
+              
+              if (await imgFile.exists()) await imgFile.delete();
+              if (await vidFile.exists()) await vidFile.delete();
             }
-          } catch (_) {}
+          } catch (_) {
+            // في حالة حدوث أي تعارض، يحفظ الصورة الأصلية فقط
+            await Gal.putImage(image.path);
+          } finally {
+            if (mounted) setState(() { _isProcessing = false; });
+          }
         });
+      } else {
+        // صورة عادية بملف واحد
+        final image = await controller!.takePicture();
+        await Gal.putImage(image.path);
+        setState(() { _isProcessing = false; });
       }
     } catch (e) {
       print('Error capturing: $e');
@@ -309,14 +321,14 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
 
-    // مصفوفة تبييض البشرة وتشكيل تشبع الألوان الخرافي (iPhone Pro Cinematic Color Matrix)
+    // مصفوفة تعزيز الألوان سينمائياً وتبييض البشرة بكفاءة عالية
     Widget previewWidget = AspectRatio(
       aspectRatio: _getAspectRatioValue(),
       child: ColorFiltered(
         colorFilter: const ColorFilter.matrix(<double>[
-          1.25, 0.05, 0.0,  0, 18,  // تعزيز الأحمر وتبييض الوش
-          0.05, 1.25, 0.05, 0, 18,  // تفتيح وتوهج البشرة
-          0.0,  0.05, 1.35, 0, 22,  // تشبع ألوان فائق ونقاء زاهي
+          1.25, 0.05, 0.0,  0, 18,
+          0.05, 1.25, 0.05, 0, 18,
+          0.0,  0.05, 1.35, 0, 22,
           0,    0,    0,    1,  0,
         ]),
         child: Transform(
@@ -362,7 +374,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
-              // مؤشر جاري المعالجة السريع
               if (_isProcessing)
                 Positioned(
                   top: 130,
@@ -377,7 +388,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                         border: Border.all(color: Colors.amber.withOpacity(0.5)),
                       ),
                       child: const Text(
-                        'جاري المعالجة الاحترافية...',
+                        'جاري حفظ الصورة الحية...',
                         style: TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.bold),
                       ),
                     ),
@@ -699,7 +710,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                           onTap: () {
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
-                                content: Text('تم حفظ الصورة بجودة احترافية في المعرض!'),
+                                content: Text('تم الحفظ في المعرض!'),
                                 duration: Duration(milliseconds: 600),
                               ),
                             );
