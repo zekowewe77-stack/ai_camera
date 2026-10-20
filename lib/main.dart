@@ -25,7 +25,7 @@ class CameraApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'كاميرا AI احترافية 2027',
+      title: 'AI Camera Pro 2027',
       theme: ThemeData.dark(),
       home: const CameraScreen(),
     );
@@ -52,7 +52,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _showZoomWheel = false;
   DateTime _lastZoomInteraction = DateTime.now();
 
-  String _currentMode = 'صورة'; // الأوضاع بالعربية: فيديو، صورة، بورتريه، صورة ليلية
+  String _currentMode = 'صورة';
   bool _isRecording = false;
   bool _isAiFocusEnabled = true;
   bool _isTimerActive = false;
