@@ -177,7 +177,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
 
       if (capturedImage != null) {
-        // مصفوفة الحِدة لإبراز النصوص والحواف عند الزوم 15x
         img.Image sharpenedImage = img.convolution(
           capturedImage,
           filter: [
