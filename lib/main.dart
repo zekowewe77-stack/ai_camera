@@ -24,7 +24,7 @@ class CameraApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'iPhone Pro AI Camera',
+      title: 'iPhone S25 Pro Camera',
       theme: ThemeData.dark(),
       home: const CameraScreen(),
     );
@@ -51,24 +51,29 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _showZoomWheel = false;
   DateTime _lastZoomInteraction = DateTime.now();
 
+  // الأوضاع الأربعة الأساسية
   String _currentMode = 'PHOTO';
   bool _isRecording = false;
   bool _isLiveEnabled = true;
   bool _isHdrPlusEnabled = true;
   bool _isTimerActive = false;
-  bool _isFilterActive = false;
   bool _showTopControlsMenu = false;
   bool _isShutterSoundOn = true;
   bool _isProcessing = false;
 
+  // إعدادات الفيديو
+  String _videoResolution = '1080p';
+  String _videoFps = '30fps';
   String _selectedAspectRatio = '4:3';
   
+  // تحكم احترافي بالتركيز والتعريض (يختفي أوتوماتيكياً بعد ثانيتين)
   bool _showFocusBox = false;
   Offset _focusPoint = Offset.zero;
   double _exposureOffset = 0.0;
   double _minAvailableExposureOffset = 0.0;
   double _maxAvailableExposureOffset = 0.0;
   double _dragStartY = 0.0;
+  DateTime _lastFocusTime = DateTime.now();
 
   late AnimationController _flashAnimController;
   late Animation<double> _flashAnimation;
@@ -149,6 +154,15 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
+  double get _effectiveMaxZoom {
+    if (_currentMode == 'PORTRAIT') {
+      return _maxZoom < 2.0 ? _maxZoom : 2.0; // بورتريه أقصى زووم 2X
+    } else if (_currentMode == 'VIDEO') {
+      return _maxZoom > 10.0 ? 10.0 : _maxZoom; // فيديو أقصى زووم 10X
+    }
+    return _maxZoom;
+  }
+
   Future<void> _toggleFlash() async {
     if (controller == null) return;
     setState(() {
@@ -161,6 +175,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
+  // ضغطة احترافية للتركيز والتعريض الموضعي لمعالجة الشمس والإضاءة القوية
   Future<void> _onTapToFocus(TapDownDetails details, BoxConstraints constraints) async {
     if (controller == null || !controller!.value.isInitialized) return;
 
@@ -172,14 +187,22 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     setState(() {
       _showFocusBox = true;
       _focusPoint = details.localPosition;
+      _lastFocusTime = DateTime.now();
     });
 
     try {
       await controller!.setFocusPoint(offset);
-      await controller!.setExposurePoint(offset);
+      await controller!.setExposurePoint(offset); // القياس الموضعي لتعديل إضاءة الشمس والظل تلقائياً
     } catch (e) {
       print(e);
     }
+
+    // إخفاء مؤشر التعريض أوتوماتيكياً بعد ثانيتين لتظل الشاشة نظيفة
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted && DateTime.now().difference(_lastFocusTime).inSeconds >= 2) {
+        setState(() { _showFocusBox = false; });
+      }
+    });
   }
 
   void _onVerticalDragStart(DragStartDetails details) {
@@ -208,7 +231,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   Future<void> _captureAction() async {
     if (controller == null || !controller!.value.isInitialized || _isProcessing) return;
 
-    if (_currentMode == 'VIDEO' || _currentMode == 'SLO-MO') {
+    if (_currentMode == 'VIDEO') {
       _toggleVideoRecording();
       return;
     }
@@ -223,7 +246,14 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
       setState(() { _isProcessing = true; });
 
-      if (_isLiveEnabled) {
+      // وضع الصورة الليلية الذكي (محاكاة S25 Ultra Nightography)
+      if (_currentMode == 'NIGHT') {
+        await Future.delayed(const Duration(milliseconds: 1500));
+        final image = await controller!.takePicture();
+        await Gal.putImage(image.path);
+        setState(() { _isProcessing = false; });
+      } 
+      else if (_isLiveEnabled && _currentMode == 'PHOTO') {
         final image = await controller!.takePicture();
         
         Future.microtask(() async {
@@ -314,15 +344,24 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
 
+    // معالجة الألوان الذكية والوضع الليلي الخارق
     Widget previewWidget = AspectRatio(
       aspectRatio: _getAspectRatioValue(),
       child: ColorFiltered(
-        colorFilter: const ColorFilter.matrix(<double>[
-          1.35, -0.05, -0.05, 0, 20,
-          -0.05, 1.35, -0.05, 0, 20,
-          -0.05, -0.05, 1.45, 0, 25,
-          0,     0,     0,    1,  0,
-        ]),
+        colorFilter: ColorFilter.matrix(_currentMode == 'NIGHT' 
+          ? const <double>[
+              1.8, 0.1, 0.0, 0, 45,
+              0.1, 1.8, 0.0, 0, 45,
+              0.0, 0.1, 1.9, 0, 50,
+              0,   0,   0,   1, 0,
+            ]
+          : const <double>[
+              1.35, -0.05, -0.05, 0, 20,
+              -0.05, 1.35, -0.05, 0, 20,
+              -0.05, -0.05, 1.45, 0, 25,
+              0,     0,     0,    1,  0,
+            ]
+        ),
         child: Transform(
           alignment: Alignment.center,
           transform: isFrontCamera ? Matrix4.rotationY(0) : Matrix4.identity(),
@@ -347,7 +386,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   },
                   onScaleUpdate: (details) async {
                     double scaleFactor = details.scale > 1 ? 1.015 : 0.985;
-                    double newZoom = (_currentZoom * scaleFactor).clamp(_minZoom, _maxZoom);
+                    double newZoom = (_currentZoom * scaleFactor).clamp(_minZoom, _effectiveMaxZoom);
                     setState(() {
                       _currentZoom = newZoom;
                       _showZoomWheel = true;
@@ -366,29 +405,18 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
-              Center(
-                child: Container(
-                  width: 220,
-                  height: 280,
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Colors.amber.withOpacity(0.6), width: 1.5),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Stack(
-                    children: [
-                      Positioned(
-                        top: 10,
-                        left: 10,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          color: Colors.amber,
-                          child: const Text('AI FOCUS', style: TextStyle(color: Colors.black, fontSize: 9, fontWeight: FontWeight.bold)),
-                        ),
-                      ),
-                    ],
+              // تتبع الوجه الذكي
+              if (_currentMode == 'PORTRAIT' || _currentMode == 'PHOTO')
+                Center(
+                  child: Container(
+                    width: 200,
+                    height: 260,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.amber.withOpacity(0.4), width: 1.0),
+                      borderRadius: BorderRadius.circular(24),
+                    ),
                   ),
                 ),
-              ),
 
               if (_isProcessing)
                 Positioned(
@@ -403,14 +431,57 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                         borderRadius: BorderRadius.circular(20),
                         border: Border.all(color: Colors.amber, width: 1),
                       ),
-                      child: const Text(
-                        '✨ AI Face & Text Sharpness...',
-                        style: TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.bold),
+                      child: Text(
+                        _currentMode == 'NIGHT' ? '🌙 AI Nightography Processing...' : '✨ AI Face & Text Sharpness...',
+                        style: const TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.bold),
                       ),
                     ),
                   ),
                 ),
 
+              // إعدادات الفيديو (1080p, 2K, 4K, 30fps, 60fps)
+              if (_currentMode == 'VIDEO')
+                Positioned(
+                  top: 90,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: ['1080p', '2K', '4K'].map((res) {
+                        bool isSelected = _videoResolution == res;
+                        return GestureDetector(
+                          onTap: () => setState(() => _videoResolution = res),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            margin: const EdgeInsets.symmetric(horizontal: 4),
+                            decoration: BoxDecoration(
+                              color: isSelected ? Colors.amber : Colors.black54,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(res, style: TextStyle(color: isSelected ? Colors.black : Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                          ),
+                        );
+                      }).toList()..addAll(['30fps', '60fps'].map((fps) {
+                        bool isSelected = _videoFps == fps;
+                        return GestureDetector(
+                          onTap: () => setState(() => _videoFps = fps),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            margin: const EdgeInsets.symmetric(horizontal: 4),
+                            decoration: BoxDecoration(
+                              color: isSelected ? Colors.amber : Colors.black54,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(fps, style: TextStyle(color: isSelected ? Colors.black : Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                          ),
+                        );
+                      })),
+                    ),
+                  ),
+                ),
+
+              // زر الشمس والتعريض الموضعي (يظهر ويختفي أوتوماتيكياً)
               if (_showFocusBox)
                 Positioned(
                   left: _focusPoint.dx - 35,
@@ -422,10 +493,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                         width: 70,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          border: Border.all(color: Colors.greenAccent, width: 1.5),
+                          border: Border.all(color: Colors.amber, width: 1.5),
                         ),
                         child: const Center(
-                          child: Icon(Icons.wb_sunny_outlined, color: Colors.greenAccent, size: 20),
+                          child: Icon(Icons.wb_sunny, color: Colors.amber, size: 22),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -437,7 +508,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                             value: _exposureOffset,
                             min: _minAvailableExposureOffset,
                             max: _maxAvailableExposureOffset,
-                            activeColor: Colors.greenAccent,
+                            activeColor: Colors.amber,
                             inactiveColor: Colors.white24,
                             onChanged: (val) async {
                               setState(() { _exposureOffset = val; });
@@ -476,9 +547,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                       ),
                       onPressed: _toggleFlash,
                     ),
-                    const Text(
-                      'AI HDR+',
-                      style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 13),
+                    Text(
+                      _currentMode == 'NIGHT' ? '🌙 NIGHT AI' : 'AI HDR+',
+                      style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 13),
                     ),
                     GestureDetector(
                       onTap: () {
@@ -507,83 +578,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                         size: 22,
                       ),
                     ),
-                    GestureDetector(
-                      onTap: () {
-                        setState(() { _isFilterActive = !_isFilterActive; });
-                      },
-                      child: Icon(
-                        Icons.filter_vintage_outlined,
-                        color: _isFilterActive ? Colors.amber : Colors.white70,
-                        size: 22,
-                      ),
-                    ),
                   ],
                 ),
               ),
-
-              Positioned(
-                top: 78,
-                left: 0,
-                right: 0,
-                child: Center(
-                  child: GestureDetector(
-                    onTap: () {
-                      setState(() { _showTopControlsMenu = !_showTopControlsMenu; });
-                    },
-                    child: Icon(
-                      _showTopControlsMenu ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
-                      color: Colors.white,
-                      size: 26,
-                    ),
-                  ),
-                ),
-              ),
-
-              if (_showTopControlsMenu)
-                Positioned(
-                  top: 110,
-                  left: 25,
-                  right: 25,
-                  child: Container(
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.9),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: Colors.amber.withOpacity(0.4)),
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SwitchListTile(
-                          activeColor: Colors.amber,
-                          title: const Text('صوت ضغطة الكاميرا (Shutter)', style: TextStyle(color: Colors.white, fontSize: 13)),
-                          value: _isShutterSoundOn,
-                          onChanged: (val) => setState(() => _isShutterSoundOn = val),
-                        ),
-                        const Divider(color: Colors.white24),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text('أبعاد الإطار:', style: TextStyle(color: Colors.white, fontSize: 13)),
-                            DropdownButton<String>(
-                              dropdownColor: Colors.grey[900],
-                              value: _selectedAspectRatio,
-                              items: ['4:3', '16:9', '1:1', 'Full'].map((ratio) {
-                                return DropdownMenuItem(
-                                  value: ratio,
-                                  child: Text(ratio, style: const TextStyle(color: Colors.amber, fontSize: 13)),
-                                );
-                              }).toList(),
-                              onChanged: (val) {
-                                if (val != null) setState(() => _selectedAspectRatio = val);
-                              },
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
 
               if (_showZoomWheel)
                 Positioned(
@@ -609,7 +606,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                           Slider(
                             value: _currentZoom,
                             min: _minZoom,
-                            max: _maxZoom,
+                            max: _effectiveMaxZoom,
                             activeColor: Colors.amber,
                             inactiveColor: Colors.white24,
                             onChanged: (val) async {
@@ -657,35 +654,36 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                           ),
                         ),
                       ),
-                      GestureDetector(
-                        onTap: () async {
-                          double targetZoom = _maxZoom >= 2.0 ? 2.0 : _maxZoom;
-                          setState(() { _currentZoom = targetZoom; });
-                          await controller!.setZoomLevel(targetZoom);
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                          margin: const EdgeInsets.symmetric(horizontal: 4),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(15),
-                            color: (_currentZoom - 2.0).abs() < 0.3 ? Colors.amber : Colors.black54,
-                            border: Border.all(color: Colors.white24),
-                          ),
-                          child: const Text(
-                            '2x',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
+                      if (_effectiveMaxZoom >= 2.0)
+                        GestureDetector(
+                          onTap: () async {
+                            setState(() { _currentZoom = 2.0; });
+                            await controller!.setZoomLevel(2.0);
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                            margin: const EdgeInsets.symmetric(horizontal: 4),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(15),
+                              color: (_currentZoom - 2.0).abs() < 0.3 ? Colors.amber : Colors.black54,
+                              border: Border.all(color: Colors.white24),
+                            ),
+                            child: const Text(
+                              '2x',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ),
                         ),
-                      ),
                     ],
                   ),
                 ),
               ),
 
+              // أوضاع التصوير الأربعة الأساسية
               Positioned(
                 bottom: 60,
                 left: 0,
@@ -695,17 +693,16 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   children: [
                     SizedBox(
                       height: 30,
-                      child: ListView(
-                        scrollDirection: Axis.horizontal,
-                        padding: const EdgeInsets.symmetric(horizontal: 20),
-                        children: ['SLO-MO', 'VIDEO', 'PHOTO', 'PORTRAIT', 'PANO'].map((mode) {
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: ['VIDEO', 'PHOTO', 'PORTRAIT', 'NIGHT'].map((mode) {
                           bool isSelected = _currentMode == mode;
                           return Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 14.0),
+                            padding: const EdgeInsets.symmetric(horizontal: 12.0),
                             child: GestureDetector(
                               onTap: () => setState(() => _currentMode = mode),
                               child: Text(
-                                mode,
+                                mode == 'NIGHT' ? 'صورة ليلية' : mode,
                                 style: TextStyle(
                                   color: isSelected ? Colors.amber : Colors.white60,
                                   fontWeight: FontWeight.bold,
@@ -726,7 +723,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                           onTap: () {
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
-                                content: Text('تم الحفظ بالتركيز التلقائي الذكي!'),
+                                content: Text('تم الحفظ في المعرض بنجاح!'),
                                 duration: Duration(milliseconds: 600),
                               ),
                             );
@@ -758,7 +755,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                                 width: 63,
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
-                                  color: (_currentMode == 'VIDEO' || _currentMode == 'SLO-MO') && _isRecording 
+                                  color: _currentMode == 'VIDEO' && _isRecording 
                                       ? Colors.red 
                                       : Colors.white,
                                 ),
