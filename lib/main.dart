@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:gal/gal.dart';
+import 'package:image/image.dart' as img;
 import 'dart:async';
 import 'dart:io';
 
@@ -47,7 +48,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   FlashMode _flashMode = FlashMode.off;
   double _currentZoom = 1.0;
   double _minZoom = 1.0;
-  double _maxZoom = 8.0;
+  double _maxZoom = 15.0;
   
   bool _showZoomWheel = false;
   DateTime _lastZoomInteraction = DateTime.now();
@@ -127,7 +128,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   Future<void> _initCamera(int index) async {
     if (controller != null) await controller!.dispose();
     
-    ResolutionPreset preset = ResolutionPreset.veryHigh;
+    ResolutionPreset preset = ResolutionPreset.max;
     if (_videoResolution == '4K') {
       preset = ResolutionPreset.max;
     } else if (_videoResolution == '2K') {
@@ -145,7 +146,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       await controller!.initialize();
       _minZoom = await controller!.getMinZoomLevel();
       _maxZoom = await controller!.getMaxZoomLevel();
-      if (_maxZoom < 5.0) _maxZoom = 8.0;
+      if (_maxZoom < 15.0) _maxZoom = 15.0;
       
       _currentZoom = _minZoom;
       await controller!.setZoomLevel(_currentZoom);
@@ -168,77 +169,39 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  double get _effectiveMaxZoom {
-    if (_currentMode == 'PORTRAIT') {
-      return _maxZoom < 2.0 ? _maxZoom : 2.0;
-    } else if (_currentMode == 'VIDEO') {
-      return _maxZoom > 10.0 ? 10.0 : _maxZoom;
-    }
-    return _maxZoom;
-  }
-
-  Future<void> _toggleFlash() async {
-    if (controller == null) return;
-    setState(() {
-      _flashMode = (_flashMode == FlashMode.off) ? FlashMode.torch : FlashMode.off;
-    });
+  // خوارزمية معالجة الحِدة والوضوح الفائق للتغلب على الكاميرا الأصلية
+  Future<String> _enhanceAndSharpenImage(String imagePath) async {
     try {
-      await controller!.setFlashMode(_flashMode);
-    } catch (e) {
-      debugPrint('$e');
-    }
-  }
+      final File imageFile = File(imagePath);
+      final List<int> bytes = await imageFile.readAsBytes();
+      img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
 
-  Future<void> _onTapToFocus(TapDownDetails details, BoxConstraints constraints) async {
-    if (controller == null || !controller!.value.isInitialized) return;
+      if (capturedImage != null) {
+        // مصفوفة الحِدة لإبراز النصوص والحواف عند الزوم 15x
+        img.Image sharpenedImage = img.convolution(
+          capturedImage,
+          filter: [
+             0, -1,  0,
+            -1,  5, -1,
+             0, -1,  0
+          ],
+          div: 1,
+          offset: 0,
+        );
 
-    final offset = Offset(
-      details.localPosition.dx / constraints.maxWidth,
-      details.localPosition.dy / constraints.maxHeight,
-    );
+        sharpenedImage = img.adjustColor(
+          sharpenedImage,
+          contrast: 1.15,
+          saturation: 1.05,
+        );
 
-    setState(() {
-      _showFocusBox = true;
-      _focusPoint = details.localPosition;
-      _lastFocusTime = DateTime.now();
-      _showExpandedPanel = false;
-    });
-
-    try {
-      await controller!.setFocusPoint(offset);
-      await controller!.setExposurePoint(offset);
-    } catch (e) {
-      debugPrint('$e');
-    }
-
-    Future.delayed(const Duration(seconds: 3), () {
-      if (mounted && DateTime.now().difference(_lastFocusTime).inSeconds >= 3) {
-        setState(() { _showFocusBox = false; });
+        final List<int> processedBytes = img.encodeJpg(sharpenedImage, quality: 100);
+        await imageFile.writeAsBytes(processedBytes);
       }
-    });
-  }
-
-  void _onVerticalDragStart(DragStartDetails details) {
-    _dragStartY = details.localPosition.dy;
-  }
-
-  void _onVerticalDragUpdate(DragUpdateDetails details) async {
-    if (controller == null || !controller!.value.isInitialized) return;
-    double delta = _dragStartY - details.localPosition.dy;
-    double sensitivity = 150.0;
-    double newOffset = (_exposureOffset + (delta / sensitivity) * (_maxAvailableExposureOffset - _minAvailableExposureOffset))
-        .clamp(_minAvailableExposureOffset, _maxAvailableExposureOffset);
-
-    setState(() {
-      _exposureOffset = newOffset;
-      _dragStartY = details.localPosition.dy;
-    });
-
-    try {
-      await controller!.setExposureOffset(_exposureOffset);
     } catch (e) {
-      debugPrint('$e');
+      debugPrint('Error sharpening image: $e');
     }
+    return imagePath;
   }
 
   Future<void> _captureAction() async {
@@ -264,27 +227,14 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
       setState(() { _isProcessing = true; _showExpandedPanel = false; });
 
-      if (_currentMode == 'NIGHT') {
-        try {
-          await controller!.setExposureOffset(_maxAvailableExposureOffset);
-        } catch (_) {}
-        
-        await Future.delayed(const Duration(milliseconds: 1000));
-        final image = await controller!.takePicture();
-        await Gal.putImage(image.path);
-        
-        try {
-          await controller!.setExposureOffset(0.0);
-        } catch (_) {}
-      } else {
-        final image = await controller!.takePicture();
-        await Gal.putImage(image.path);
-      }
+      final image = await controller!.takePicture();
+      final String enhancedPath = await _enhanceAndSharpenImage(image.path);
+      await Gal.putImage(enhancedPath);
 
       if (mounted) {
         setState(() { _isProcessing = false; });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Saved to gallery successfully!'), duration: Duration(milliseconds: 600)),
+          const SnackBar(content: Text('تم التقاط ومعالجة الصورة بجودة فائقة!'), duration: Duration(milliseconds: 600)),
         );
       }
     } catch (e) {
@@ -303,11 +253,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         _videoSeconds = 0;
       });
       await Gal.putVideo(file.path);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Video saved successfully!'), duration: Duration(milliseconds: 600)),
-        );
-      }
     } else {
       await controller!.startVideoRecording();
       setState(() { 
@@ -347,7 +292,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   void dispose() {
     _videoTimer?.cancel();
-    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.removeObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
@@ -381,15 +326,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             children: [
               Positioned.fill(
                 child: GestureDetector(
-                  onTapDown: (details) => _onTapToFocus(details, constraints),
-                  onVerticalDragStart: _onVerticalDragStart,
-                  onVerticalDragUpdate: _onVerticalDragUpdate,
                   onScaleStart: (_) {
                     setState(() { _showZoomWheel = true; _showExpandedPanel = false; });
                   },
                   onScaleUpdate: (details) async {
-                    double scaleFactor = details.scale > 1 ? 1.015 : 0.985;
-                    double newZoom = (_currentZoom * scaleFactor).clamp(_minZoom, _effectiveMaxZoom);
+                    double scaleFactor = details.scale > 1 ? 1.02 : 0.98;
+                    double newZoom = (_currentZoom * scaleFactor).clamp(_minZoom, _maxZoom);
                     setState(() {
                       _currentZoom = newZoom;
                       _showZoomWheel = true;
@@ -408,118 +350,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 ),
               ),
 
-              if (_isGridActive)
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: Column(
-                      children: [
-                        Expanded(child: Container(decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white30, width: 0.5))))),
-                        Expanded(child: Container(decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white30, width: 0.5))))),
-                        Expanded(child: Container()),
-                      ],
-                    ),
-                  ),
-                ),
-
-              if (_countdownSeconds > 0)
-                Positioned.fill(
-                  child: Center(
-                    child: Text(
-                      '$_countdownSeconds',
-                      style: const TextStyle(color: Colors.white, fontSize: 80, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ),
-
-              if (_showFocusBox && _isAiFocusEnabled)
-                Positioned(
-                  left: _focusPoint.dx - 80,
-                  top: _focusPoint.dy - 100,
-                  child: Container(
-                    width: 160,
-                    height: 200,
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.white, width: 2.0),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                  ),
-                ),
-
-              if (_currentMode == 'PORTRAIT')
-                Positioned(
-                  top: 100,
-                  left: 30,
-                  child: GestureDetector(
-                    onTap: () {
-                      setState(() {
-                        _showApertureSlider = !_showApertureSlider;
-                        _showExpandedPanel = false;
-                      });
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Colors.black54,
-                        border: Border.all(color: Colors.amber, width: 1.5),
-                      ),
-                      child: const Icon(Icons.blur_on, color: Colors.amber, size: 24),
-                    ),
-                  ),
-                ),
-
-              if (_currentMode == 'PORTRAIT' && _showApertureSlider)
-                Positioned(
-                  top: 160,
-                  left: 20,
-                  right: 20,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                    decoration: BoxDecoration(
-                      color: Colors.black87,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: Colors.amber.withOpacity(0.5)),
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          'Aperture: f${_selectedAperture.toStringAsFixed(1)}',
-                          style: const TextStyle(color: Colors.amber, fontSize: 13, fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(height: 8),
-                        SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Row(
-                            children: _apertureValues.map((val) {
-                              bool isSelected = _selectedAperture == val;
-                              return GestureDetector(
-                                onTap: () => setState(() => _selectedAperture = val),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                  margin: const EdgeInsets.symmetric(horizontal: 4),
-                                  decoration: BoxDecoration(
-                                    color: isSelected ? Colors.amber : Colors.grey[900],
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Text(
-                                    'f${val.toStringAsFixed(val == 11 || val == 16 ? 0 : 1)}',
-                                    style: TextStyle(
-                                      color: isSelected ? Colors.black : Colors.white70,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ),
-                              );
-                            }).toList(),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
               if (_isProcessing)
                 Positioned(
                   top: 130,
@@ -533,263 +363,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                         borderRadius: BorderRadius.circular(20),
                         border: Border.all(color: Colors.amber, width: 1),
                       ),
-                      child: Text(
-                        _currentMode == 'NIGHT' ? '🌙 Processing Night Mode...' : '✨ Capturing High Quality...',
-                        style: const TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.bold),
+                      child: const Text(
+                        '✨ جاري معالجة وحِدة الـ AI للزوم...',
+                        style: TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.bold),
                       ),
                     ),
                   ),
                 ),
-
-              if (_currentMode == 'VIDEO')
-                Positioned(
-                  top: 105,
-                  left: 0,
-                  right: 0,
-                  child: Center(
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        for (var res in ['1080p', '2K', '4K'])
-                          GestureDetector(
-                            onTap: () {
-                              setState(() { _videoResolution = res; });
-                              _initCamera(selectedCameraIndex);
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-                              margin: const EdgeInsets.symmetric(horizontal: 4),
-                              decoration: BoxDecoration(
-                                color: _videoResolution == res ? Colors.redAccent : Colors.black54,
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Text(res, style: TextStyle(color: _videoResolution == res ? Colors.white : Colors.white70, fontSize: 11, fontWeight: FontWeight.bold)),
-                            ),
-                          ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                          margin: const EdgeInsets.symmetric(horizontal: 4),
-                          decoration: BoxDecoration(
-                            color: Colors.grey[850],
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: const Text('30fps', style: TextStyle(color: Colors.redAccent, fontSize: 11, fontWeight: FontWeight.bold)),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
-              if (_isRecording)
-                Positioned(
-                  top: 95,
-                  left: 0,
-                  right: 0,
-                  child: Center(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: Colors.red,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Text(
-                        _formatVideoTime(_videoSeconds),
-                        style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 1.2),
-                      ),
-                    ),
-                  ),
-                ),
-
-              if (_showFocusBox)
-                Positioned(
-                  right: 20,
-                  top: _focusPoint.dy - 40,
-                  child: Container(
-                    height: 120,
-                    width: 35,
-                    decoration: BoxDecoration(
-                      color: Colors.black54,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: Colors.amber.withOpacity(0.6)),
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(Icons.wb_sunny, color: Colors.amber, size: 16),
-                        Expanded(
-                          child: RotatedBox(
-                            quarterTurns: 3,
-                            child: Slider(
-                              value: _exposureOffset,
-                              min: _minAvailableExposureOffset,
-                              max: _maxAvailableExposureOffset,
-                              activeColor: Colors.amber,
-                              inactiveColor: Colors.white24,
-                              onChanged: (val) async {
-                                setState(() { _exposureOffset = val; });
-                                await controller!.setExposureOffset(val);
-                              },
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
-              AnimatedBuilder(
-                animation: _flashAnimation,
-                builder: (context, child) {
-                  return IgnorePointer(
-                    child: Container(
-                      color: Colors.white.withOpacity(_flashAnimation.value),
-                    ),
-                  );
-                },
-              ),
-
-              if (_showExpandedPanel)
-                Positioned(
-                  top: 90,
-                  left: 20,
-                  right: 20,
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.92),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: Colors.white24),
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceAround,
-                          children: [
-                            _buildPanelItem(
-                              _isHdrActive ? Icons.hdr_on : Icons.hdr_off,
-                              'HDR',
-                              _isHdrActive,
-                              () => setState(() => _isHdrActive = !_isHdrActive),
-                            ),
-                            _buildPanelItem(
-                              _isTimerActive ? Icons.timer : Icons.timer_off,
-                              'Timer',
-                              _isTimerActive,
-                              () => setState(() {
-                                _isTimerActive = !_isTimerActive;
-                              }),
-                            ),
-                            _buildPanelItem(
-                              Icons.branding_watermark,
-                              'Watermark',
-                              _isWatermarkActive,
-                              () => setState(() => _isWatermarkActive = !_isWatermarkActive),
-                            ),
-                            _buildPanelItem(
-                              Icons.grid_on,
-                              'Grid',
-                              _isGridActive,
-                              () => setState(() {
-                                _isGridActive = !_isGridActive;
-                              }),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceAround,
-                          children: [
-                            _buildPanelItem(
-                              Icons.center_focus_strong,
-                              'AI Focus',
-                              _isAiFocusEnabled,
-                              () => setState(() => _isAiFocusEnabled = !_isAiFocusEnabled),
-                            ),
-                            _buildPanelItem(
-                              Icons.settings,
-                              'Settings',
-                              false,
-                              () {
-                                setState(() => _showExpandedPanel = false);
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(builder: (context) => const SettingsScreen()),
-                                );
-                              },
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
-              Positioned(
-                top: 40,
-                left: 15,
-                right: 15,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.document_scanner_outlined, color: Colors.white, size: 22),
-                      onPressed: () {},
-                    ),
-                    IconButton(
-                      icon: Icon(
-                        _flashMode == FlashMode.torch ? Icons.flash_on : Icons.flash_off,
-                        color: _flashMode == FlashMode.torch ? Colors.amber : Colors.white,
-                        size: 22,
-                      ),
-                      onPressed: _toggleFlash,
-                    ),
-                    GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          _showExpandedPanel = !_showExpandedPanel;
-                          _showApertureSlider = false;
-                        });
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: Colors.grey[900],
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Icon(
-                          _showExpandedPanel ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
-                          color: Colors.greenAccent,
-                          size: 24,
-                        ),
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.white, width: 1),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: const Text('50M', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
-                    ),
-                    GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          _selectedAspectRatio = _selectedAspectRatio == '4:3' ? '16:9' : '4:3';
-                        });
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.white, width: 1),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(_selectedAspectRatio, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
 
               if (_showZoomWheel)
                 Positioned(
@@ -815,7 +395,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                           Slider(
                             value: _currentZoom,
                             min: _minZoom,
-                            max: _effectiveMaxZoom,
+                            max: _maxZoom,
                             activeColor: Colors.amber,
                             inactiveColor: Colors.white24,
                             onChanged: (val) async {
@@ -831,66 +411,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                     ),
                   ),
                 ),
-
-              Positioned(
-                bottom: 195,
-                left: 0,
-                right: 0,
-                child: Center(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      GestureDetector(
-                        onTap: () async {
-                          setState(() { _currentZoom = _minZoom; });
-                          await controller!.setZoomLevel(_minZoom);
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                          margin: const EdgeInsets.symmetric(horizontal: 4),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(15),
-                            color: (_currentZoom - _minZoom).abs() < 0.3 ? Colors.amber : Colors.black54,
-                            border: Border.all(color: Colors.white24),
-                          ),
-                          child: Text(
-                            _minZoom < 1.0 ? '.5x' : '1x',
-                            style: TextStyle(
-                              color: (_currentZoom - _minZoom).abs() < 0.3 ? Colors.black : Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ),
-                      if (_effectiveMaxZoom >= 2.0)
-                        GestureDetector(
-                          onTap: () async {
-                            setState(() { _currentZoom = 2.0; });
-                            await controller!.setZoomLevel(2.0);
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                            margin: const EdgeInsets.symmetric(horizontal: 4),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(15),
-                              color: (_currentZoom - 2.0).abs() < 0.3 ? Colors.amber : Colors.black54,
-                              border: Border.all(color: Colors.white24),
-                            ),
-                            child: const Text(
-                              '2x',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
 
               Positioned(
                 bottom: 60,
@@ -927,7 +447,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                       ),
                     ),
                     const SizedBox(height: 12),
-
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
@@ -944,7 +463,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                             child: const Icon(Icons.photo, color: Colors.white, size: 24),
                           ),
                         ),
-
                         GestureDetector(
                           onTap: _captureAction,
                           child: Container(
@@ -960,16 +478,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                                 width: 63,
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
-                                  color: _currentMode == 'VIDEO' && _isRecording 
-                                      ? Colors.red 
-                                      : Colors.white,
+                                  color: _currentMode == 'VIDEO' && _isRecording ? Colors.red : Colors.white,
                                 ),
                                 child: _isRecording ? const Icon(Icons.stop, color: Colors.white, size: 30) : null,
                               ),
                             ),
                           ),
                         ),
-
                         IconButton(
                           iconSize: 30,
                           icon: const Icon(Icons.cameraswitch_outlined, color: Colors.white),
@@ -983,28 +498,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             ],
           );
         },
-      ),
-    );
-  }
-
-  Widget _buildPanelItem(IconData icon, String label, bool isActive, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: isActive ? Colors.amber.withOpacity(0.2) : Colors.grey[850],
-              shape: BoxShape.circle,
-              border: Border.all(color: isActive ? Colors.amber : Colors.transparent),
-            ),
-            child: Icon(icon, color: isActive ? Colors.amber : Colors.white70, size: 22),
-          ),
-          const SizedBox(height: 6),
-          Text(label, style: TextStyle(color: isActive ? Colors.amber : Colors.white70, fontSize: 11)),
-        ],
       ),
     );
   }
