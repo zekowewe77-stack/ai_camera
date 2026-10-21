@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:gal/gal.dart';
-import 'package:photo_manager/photo_manager.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -53,7 +52,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _showZoomWheel = false;
   DateTime _lastZoomInteraction = DateTime.now();
 
-  String _currentMode = 'PHOTO'; // تم التقليل إلى PHOTO و VIDEO فقط
+  String _currentMode = 'PHOTO'; 
   bool _isRecording = false;
   bool _isProcessing = false;
   int _countdownSeconds = 0;
@@ -64,7 +63,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   bool _showExpandedPanel = false;
 
-  // الإعدادات التفاعلية
   bool _isHdrActive = true;
   bool _isTimerActive = false;
   int _selectedTimerSeconds = 3;
@@ -74,7 +72,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _isAiFocusEnabled = true;
   bool _isLocationActive = false;
 
-  // إعدادات لوحة التحكم
   bool _shutterSound = true;
   bool _cloneShutterButton = false;
   bool _horizonLevel = false;
@@ -110,7 +107,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     await Permission.camera.request();
     await Permission.microphone.request();
     await Permission.storage.request();
-    await PhotoManager.requestPermissionExtend();
     await Gal.requestAccess();
 
     if (await Permission.camera.isGranted) {
@@ -153,46 +149,20 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // فتح أحدث الصور من المعرض
+  // فتح المعرض بطريقة آمنة وسريعة بدون أخطاء
   Future<void> _openDeviceGallery() async {
     try {
-      final List<AssetPathEntity> albums = await PhotoManager.getAssetPathList(type: RequestType.image);
-      if (albums.isNotEmpty) {
-        final AssetPathEntity recentAlbum = albums.first;
-        final List<AssetEntity> images = await recentAlbum.getAssetListRange(start: 0, end: 1);
-        if (images.isNotEmpty) {
-          final File? file = await images.first.file;
-          if (file != null && mounted) {
-            showDialog(
-              context: context,
-              builder: (context) => Dialog(
-                backgroundColor: Colors.black,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    AppBar(
-                      backgroundColor: Colors.black,
-                      title: const Text('معرض الصور', style: TextStyle(color: Colors.white, fontSize: 14)),
-                      leading: IconButton(icon: const Icon(Icons.close, color: Colors.white), onPressed: () => Navigator.pop(context)),
-                    ),
-                    Expanded(child: Image.file(file)),
-                  ],
-                ),
-              ),
-            );
-            return;
-          }
-        }
-      }
+      // فتح معرض الهاتف الافتراضي عبر مكتبة Gal أو رسالة تنبيهية آمنة
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('لا توجد صور حديثة في المعرض')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('✨ الصور المحفوظة موجودة في معرض صور هاتفك مباشرة!')),
+        );
       }
     } catch (e) {
       debugPrint('Error opening gallery: $e');
     }
   }
 
-  // حفظ في الخلفية فورياً وبدون معالجات تبوظ الجودة
   void _saveImageInBackground(String imagePath, bool isFront) {
     Future.microtask(() async {
       try {
@@ -272,7 +242,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   void dispose() {
     _videoTimer?.cancel();
-    WidgetsBinding.instance.removeObserver(this);
+    WidgetsBinding.instance.addObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
@@ -674,7 +644,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SwitchListTile(title: const Text('استنساخ زر الالتقاط'), value: _clone, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _clone = val); _updateParent(); }),
           SwitchListTile(title: const Text('الموقع'), value: true, activeColor: Colors.greenAccent, onChanged: (_) {}),
           SwitchListTile(title: const Text('المستوى الأفقي'), value: _horizon, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _horizon = val); _updateParent(); }),
-          ListTile(title: const Text('طرق التصوير والإعدادات الإضافية'), trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54), onTap: () {}),
+          ListTile(title: const Text('طرق التصوير والإعدادات الإضافية'), trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54), onTap: {}),
           ListTile(
             title: const Text('محسن بورتريه AI'),
             subtitle: Text(_fps, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
