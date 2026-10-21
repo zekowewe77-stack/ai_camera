@@ -1,6 +1,6 @@
-name: ai_camera_pro_2027
-description: "AI Camera Pro 2027 - تطبيق كاميرا ذكي احترافي"
-publish_to: 'none'
+name: camera_ai_app
+description: "AI Camera Pro 2027 application with advanced zoom, background processing, and photo gallery."
+publish_to: 'none' 
 
 version: 1.0.0+1
 
@@ -10,10 +10,12 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  camera: ^0.10.5+9
-  permission_handler: ^11.3.1
-  gal: ^2.3.0
-  image: ^4.1.7
+  camera: ^0.11.0+2
+  permission_handler: ^11.3.0
+  gal: ^2.2.1
+  image: ^4.1.3
+  photo_manager: ^3.0.0
+  cupertino_icons: ^1.0.6
 
 dev_dependencies:
   flutter_test:
