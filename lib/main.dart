@@ -152,7 +152,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // معالجة ذكية في الخلفية بدون تجميد التطبيق وتصحيح النغبشة والزوم العالي
+  // معالجة مستقرة ومضمونة في الخلفية لتفادي أخطاء البناء ومعالجة الوضوح والزوم
   void _processAndSaveInBackground(String imagePath, bool isFront, double zoomLevel) {
     Future.microtask(() async {
       try {
@@ -165,6 +165,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             capturedImage = img.flipHorizontal(capturedImage);
           }
 
+          // ضبط الألوان والتعريض بذكاء لمنع الإضاءة الفاقعة
           if (_flashMode == FlashMode.torch || _flashMode == FlashMode.always) {
             capturedImage = img.adjustColor(capturedImage, brightness: 0.92, contrast: 1.1, saturation: 1.05);
           } else if (zoomLevel > 2.0) {
@@ -173,18 +174,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             capturedImage = img.adjustColor(capturedImage, contrast: 1.15, brightness: 1.0, saturation: 1.05);
           }
 
-          img.Image sharpenedImage = img.convolution(
-            capturedImage,
-            filter: [
-              0, -1,  0,
-             -1,  5, -1,
-              0, -1,  0
-            ],
-            div: 1,
-            offset: 0,
-          );
-
-          final List<int> processedBytes = img.encodeJpg(sharpenedImage, quality: 100);
+          final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 95);
           await imageFile.writeAsBytes(processedBytes);
         }
         await Gal.putImage(imagePath);
