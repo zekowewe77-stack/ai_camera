@@ -150,7 +150,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // معالجة ذكية وسريعة في الخلفية لمنع التهنيج، مع ضبط الإضاءة، وحل مشكلة النغبشة والزوم
+  // معالجة آمنة ومستقرة في الخلفية لمنع التهنيج وتحسين جودة الصور والزوم
   void _processAndSaveInBackground(String imagePath, bool isFront, double zoomLevel) {
     Future.microtask(() async {
       try {
@@ -159,31 +159,17 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
 
         if (capturedImage != null) {
-          // تعديل انعكاس الكاميرا الأمامية ليطابق الحقيقة (عدل بدون لخبطة يمين ويسار)
           if (isFront) {
-            capturedImage = img.flop(capturedImage);
+            capturedImage = img.flipHorizontal(capturedImage);
           }
 
-          // التعرف التلقائي على الإضاءة والزوم لمعالجة التفاصيل في الشمس ومنع النغبشة تماماً
           if (zoomLevel > 2.0) {
-            capturedImage = img.adjustColor(capturedImage, brightness: 1.02, contrast: 1.2, saturation: 1.1);
+            capturedImage = img.adjustColor(capturedImage, brightness: 1.0, contrast: 1.15, saturation: 1.05);
           } else if (_isHdrActive) {
-            capturedImage = img.adjustColor(capturedImage, contrast: 1.12, brightness: 1.0, saturation: 1.05);
+            capturedImage = img.adjustColor(capturedImage, contrast: 1.1, brightness: 1.0, saturation: 1.02);
           }
 
-          // فلتر خفيف ونظيف لزيادة الحِدة ومنع أي نغبشة عند تقريب الصورة لاحقاً
-          img.Image sharpenedImage = img.convolution(
-            capturedImage,
-            filter: [
-              0, -1,  0,
-             -1,  5, -1,
-              0, -1,  0
-            ],
-            div: 1,
-            offset: 0,
-          );
-
-          final List<int> processedBytes = img.encodeJpg(sharpenedImage, quality: 100);
+          final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 95);
           await imageFile.writeAsBytes(processedBytes);
         }
         await Gal.putImage(imagePath);
@@ -220,12 +206,11 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       final image = await controller!.takePicture();
       bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
       
-      // حفظ الصورة ومعالجتها في الخلفية بدون تهنيج نهائياً
       _processAndSaveInBackground(image.path, isFront, _currentZoom);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          constSnackBar(content: Text('✨ تم التقاط الصورة، وتتم معالجتها باحترافية في الخلفية!'), duration: Duration(milliseconds: 500)),
+          const SnackBar(content: Text('✨ تم التقاط الصورة والمعالجة جارية في الخلفية!'), duration: Duration(milliseconds: 500)),
         );
       }
     } catch (e) {
@@ -300,7 +285,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   void dispose() {
     _videoTimer?.cancel();
-    WidgetsBinding.instance.removeObserver(this);
+    WidgetsBinding.instance.addObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
@@ -358,12 +343,11 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
 
-    // ضبط اتجاه معاينة الكاميرا الأمامية بحيث تكون صحيحة 100% بدون عكس حركة اليمين واليسار
     Widget previewWidget = AspectRatio(
       aspectRatio: _getAspectRatioValue(),
       child: Transform(
         alignment: Alignment.center,
-        transform: isFrontCamera ? Matrix4.rotationY(3.14159) : Matrix4.identity(),
+        transform: isFrontCamera ? Matrix4.rotationY(0) : Matrix4.identity(),
         child: CameraPreview(controller!),
       ),
     );
