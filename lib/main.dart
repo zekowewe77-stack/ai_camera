@@ -151,14 +151,32 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  Future<String> _safeProcessImage(String imagePath, bool isFront) async {
+  // خوارزمية معالجة الصور المتطورة لزيادة الجودة والحفاظ على اللمعان الجذاب
+  Future<String> _enhanceAndSharpenImage(String imagePath, bool isFront, double zoomLevel) async {
     try {
       final File imageFile = File(imagePath);
       final List<int> bytes = await imageFile.readAsBytes();
       img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
 
       if (capturedImage != null) {
-        final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 100);
+        if (zoomLevel > 2.0) {
+          capturedImage = img.adjustColor(capturedImage, contrast: 1.35, brightness: 1.08, saturation: 1.2);
+        } else if (_isHdrActive) {
+          capturedImage = img.adjustColor(capturedImage, contrast: 1.25, brightness: 1.06, saturation: 1.15);
+        }
+
+        img.Image sharpenedImage = img.convolution(
+          capturedImage,
+          filter: [
+             0, -1,  0,
+            -1,  5, -1,
+             0, -1,  0
+          ],
+          div: 1,
+          offset: 0,
+        );
+
+        final List<int> processedBytes = img.encodeJpg(sharpenedImage, quality: 100);
         await imageFile.writeAsBytes(processedBytes);
       }
     } catch (e) {
@@ -194,13 +212,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       final image = await controller!.takePicture();
       bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
       
-      final String processedPath = await _safeProcessImage(image.path, isFront);
-      await Gal.putImage(processedPath);
+      final String enhancedPath = await _enhanceAndSharpenImage(image.path, isFront, _currentZoom);
+      await Gal.putImage(enhancedPath);
 
       if (mounted) {
         setState(() { _isProcessing = false; });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('✨ تم التقاط الصورة بنجاح!'), duration: Duration(milliseconds: 600)),
+          const SnackBar(content: Text('✨ تمت التقاط الصورة بأعلى جودة مع الحفاظ على اللمعان!'), duration: Duration(milliseconds: 600)),
         );
       }
     } catch (e) {
