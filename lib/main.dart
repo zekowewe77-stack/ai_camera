@@ -41,7 +41,7 @@ class CameraScreen extends StatefulWidget {
   State<CameraScreen> createState() => _CameraScreenState();
 }
 
-class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver, SingleTickerProviderStateMixin {
+class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver {
   CameraController? controller;
   int selectedCameraIndex = 0;
   bool isPermissionGranted = false;
@@ -52,7 +52,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   double _maxZoom = 15.0;
   
   bool _showZoomWheel = false;
-
   String _currentMode = 'PHOTO';
   bool _isRecording = false;
   int _countdownSeconds = 0;
@@ -61,7 +60,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   int _videoSeconds = 0;
   bool _showExpandedPanel = false;
 
-  // الإعدادات الكاملة
   bool _isHdrActive = true;
   bool _isTimerActive = false;
   int _selectedTimerSeconds = 3;
@@ -71,7 +69,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _isAiFocusEnabled = true;
   bool _isLocationActive = false;
 
-  // إعدادات لوحة التحكم الكاملة
   bool _shutterSound = true;
   bool _cloneShutterButton = false;
   bool _horizonLevel = false;
@@ -134,7 +131,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       _currentZoom = _minZoom;
       await controller!.setZoomLevel(_currentZoom);
       await controller!.setFlashMode(_flashMode);
-      await controller!.setExposureOffset(0.0);
 
       if (mounted) setState(() {});
     } catch (e) {
@@ -161,9 +157,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             capturedImage = img.flipHorizontal(capturedImage);
           }
 
-          if (_flashMode == FlashMode.torch || _flashMode == FlashMode.always) {
-            capturedImage = img.adjustColor(capturedImage, brightness: 0.92, contrast: 1.1, saturation: 1.05);
-          } else if (zoomLevel > 2.0) {
+          if (zoomLevel > 2.0) {
             capturedImage = img.adjustColor(capturedImage, brightness: 0.95, contrast: 1.2, saturation: 1.1);
           }
 
