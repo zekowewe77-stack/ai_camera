@@ -158,9 +158,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
 
       if (capturedImage != null) {
-        if (isFront) {
-          capturedImage = img.flipHorizontal(capturedImage);
-        }
         final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 100);
         await imageFile.writeAsBytes(processedBytes);
       }
@@ -241,7 +238,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   void dispose() {
     _videoTimer?.cancel();
-    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.removeObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
@@ -297,9 +294,15 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       return const Scaffold(backgroundColor: Colors.black, body: Center(child: CircularProgressIndicator(color: Colors.greenAccent)));
     }
 
+    bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
+
     Widget previewWidget = AspectRatio(
       aspectRatio: _getAspectRatioValue(),
-      child: CameraPreview(controller!),
+      child: Transform(
+        alignment: Alignment.center,
+        transform: isFrontCamera ? Matrix4.rotationY(3.14159) : Matrix4.identity(),
+        child: CameraPreview(controller!),
+      ),
     );
 
     return Scaffold(
