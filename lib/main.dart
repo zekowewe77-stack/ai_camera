@@ -48,7 +48,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   FlashMode _flashMode = FlashMode.off;
   double _currentZoom = 1.0;
   double _minZoom = 1.0;
-  double _maxZoom = 4.0; // سيتم تحديثه تلقائياً حسب قدرة هاردوير الهاتف الحقيقية
+  double _maxZoom = 4.0;
   
   bool _showZoomWheel = false;
   DateTime _lastZoomInteraction = DateTime.now();
@@ -63,7 +63,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   bool _showExpandedPanel = false;
 
-  // الإعدادات التفاعلية
   bool _isHdrActive = true;
   bool _isTimerActive = false;
   int _selectedTimerSeconds = 3;
@@ -73,7 +72,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _isAiFocusEnabled = true;
   bool _isLocationActive = false;
 
-  // إعدادات لوحة التحكم
   bool _shutterSound = true;
   bool _cloneShutterButton = false;
   bool _horizonLevel = false;
@@ -117,7 +115,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // التعرف التلقائي على قدرات الكاميرا والزوم الحقيقي لكل هاتف بدون أرقام وهمية
   Future<void> _initCamera(int index) async {
     if (controller != null) await controller!.dispose();
     
@@ -133,8 +130,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       
       _minZoom = await controller!.getMinZoomLevel();
       double hardwareMaxZoom = await controller!.getMaxZoomLevel();
-      
-      // جلب الزوم الحقيقي للهاردوير مع وضع حد أدنى منطقي 4x أو حسب إمكانيات الجهاز
       _maxZoom = hardwareMaxZoom > 1.0 ? hardwareMaxZoom : 4.0;
 
       _currentZoom = _minZoom;
@@ -154,7 +149,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // معالجة فورية ونقية بدون نغبشة وبجودة 4K مع ضبط انعكاس الكاميرا الأمامية
   Future<String> _enhanceAndSharpenImage(String imagePath, bool isFront, double zoomLevel) async {
     try {
       final File imageFile = File(imagePath);
@@ -162,7 +156,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
 
       if (capturedImage != null) {
-        // تعديل الصورة الأمامية لتصبح عدلة وصحيحة في المعرض تماماً
         if (isFront) {
           capturedImage = img.flipHorizontal(capturedImage);
         }
@@ -173,7 +166,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
           capturedImage = img.adjustColor(capturedImage, contrast: 1.1, brightness: 1.02, saturation: 1.05);
         }
 
-        // حفظ بأقصى جودة نقية لضمان عدم وجود أي نغبشة عند تقريب الصورة
         final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 100);
         await imageFile.writeAsBytes(processedBytes);
       }
@@ -216,7 +208,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       if (mounted) {
         setState(() { _isProcessing = false; });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('✨ تمت التقاط الصورة وحفظها بجودة 4K نقية!'), duration: Duration(milliseconds: 500)),
+          const SnackBar(content: Text('✨ تمت التقاط الصورة وحفظها بنجاح!'), duration: Duration(milliseconds: 500)),
         );
       }
     } catch (e) {
@@ -254,7 +246,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   void dispose() {
     _videoTimer?.cancel();
-    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.removeObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
@@ -310,17 +302,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       return const Scaffold(backgroundColor: Colors.black, body: Center(child: CircularProgressIndicator(color: Colors.greenAccent)));
     }
 
-    bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
-
-    Widget previewWidget = AspectRatio(
-      aspectRatio: _getAspectRatioValue(),
-      child: Transform(
-        alignment: Alignment.center,
-        transform: isFrontCamera ? Matrix4.rotationY(3.14159) : Matrix4.identity(),
-        child: CameraPreview(controller!),
-      ),
-    );
-
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
@@ -334,7 +315,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 setState(() { _currentZoom = newZoom; _showZoomWheel = true; _lastZoomInteraction = DateTime.now(); });
                 await controller!.setZoomLevel(_currentZoom);
               },
-              child: Center(child: previewWidget),
+              child: Center(
+                child: AspectRatio(
+                  aspectRatio: _getAspectRatioValue(),
+                  child: CameraPreview(controller!),
+                ),
+              ),
             ),
           ),
 
@@ -377,7 +363,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text('زوم AI: ${_currentZoom.toStringAsFixed(1)}x (أقصى: ${_maxZoom.toStringAsFixed(1)}x)', style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                      Text('زوم: ${_currentZoom.toStringAsFixed(1)}x (أقصى: ${_maxZoom.toStringAsFixed(1)}x)', style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
                       Slider(
                         value: _currentZoom,
                         min: _minZoom,
@@ -493,17 +479,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                       )));
                     }),
                   ],
-                ),
-              ),
-            ),
-
-          if (_isProcessing)
-            const Positioned(
-              top: 120, left: 0, right: 0,
-              child: Center(
-                child: Chip(
-                  backgroundColor: Colors.black87,
-                  label: Text('✨ جاري معالجة الزوم الفائق وجودة 4K...', style: TextStyle(color: Colors.greenAccent, fontSize: 12)),
                 ),
               ),
             ),
@@ -667,7 +642,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SwitchListTile(title: const Text('استنساخ زر الالتقاط'), value: _clone, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _clone = val); _updateParent(); }),
           SwitchListTile(title: const Text('الموقع'), value: true, activeColor: Colors.greenAccent, onChanged: (_) {}),
           SwitchListTile(title: const Text('المستوى الأفقي'), value: _horizon, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _horizon = val); _updateParent(); }),
-          ListTile(title: const Text('طرق التصوير والإعدادات الإضافية'), trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54), onTap: {}),
+          ListTile(title: const Text('طرق التصوير والإعدادات الإضافية'), trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54), onTap: () {}),
           ListTile(
             title: const Text('محسن بورتريه AI'),
             subtitle: Text(_fps, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
@@ -684,7 +659,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ListTile(title: const Text('تلقائي', style: TextStyle(color: Colors.white)), onTap: () { setState(() => _fps = 'تلقائي'); _updateParent(); Navigator.pop(context); }),
                       ListTile(title: const Text('50 فريم', style: TextStyle(color: Colors.white)), onTap: () { setState(() => _fps = '50 فريم'); _updateParent(); Navigator.pop(context); }),
                       ListTile(title: const Text('60 فريم', style: TextStyle(color: Colors.white)), onTap: () { setState(() => _fps = '60 فريم'); _updateParent(); Navigator.pop(context); }),
-                      
                     ],
                   ),
                 ),
