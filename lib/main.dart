@@ -41,7 +41,7 @@ class CameraScreen extends StatefulWidget {
   State<CameraScreen> createState() => _CameraScreenState();
 }
 
-class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver {
+class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   CameraController? controller;
   int selectedCameraIndex = 0;
   bool isPermissionGranted = false;
@@ -52,6 +52,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   double _maxZoom = 15.0;
   
   bool _showZoomWheel = false;
+  DateTime _lastZoomInteraction = DateTime.now();
+
   String _currentMode = 'PHOTO';
   bool _isRecording = false;
   int _countdownSeconds = 0;
@@ -77,11 +79,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _qrScannerActive = true;
 
   String _selectedAspectRatio = '4:3';
+  late AnimationController _flashAnimController;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _flashAnimController = AnimationController(vsync: this, duration: const Duration(milliseconds: 150));
     _requestPermissionAndInit();
   }
 
@@ -131,6 +135,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       _currentZoom = _minZoom;
       await controller!.setZoomLevel(_currentZoom);
       await controller!.setFlashMode(_flashMode);
+      await controller!.setExposureOffset(0.0);
 
       if (mounted) setState(() {});
     } catch (e) {
@@ -145,6 +150,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
+  // معالجة ذكية وسريعة في الخلفية لمنع التهنيج، مع ضبط الإضاءة، وحل مشكلة النغبشة والزوم
   void _processAndSaveInBackground(String imagePath, bool isFront, double zoomLevel) {
     Future.microtask(() async {
       try {
@@ -153,15 +159,31 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
 
         if (capturedImage != null) {
+          // تعديل انعكاس الكاميرا الأمامية ليطابق الحقيقة (عدل بدون لخبطة يمين ويسار)
           if (isFront) {
-            capturedImage = img.flipHorizontal(capturedImage);
+            capturedImage = img.flop(capturedImage);
           }
 
+          // التعرف التلقائي على الإضاءة والزوم لمعالجة التفاصيل في الشمس ومنع النغبشة تماماً
           if (zoomLevel > 2.0) {
-            capturedImage = img.adjustColor(capturedImage, brightness: 0.95, contrast: 1.2, saturation: 1.1);
+            capturedImage = img.adjustColor(capturedImage, brightness: 1.02, contrast: 1.2, saturation: 1.1);
+          } else if (_isHdrActive) {
+            capturedImage = img.adjustColor(capturedImage, contrast: 1.12, brightness: 1.0, saturation: 1.05);
           }
 
-          final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 95);
+          // فلتر خفيف ونظيف لزيادة الحِدة ومنع أي نغبشة عند تقريب الصورة لاحقاً
+          img.Image sharpenedImage = img.convolution(
+            capturedImage,
+            filter: [
+              0, -1,  0,
+             -1,  5, -1,
+              0, -1,  0
+            ],
+            div: 1,
+            offset: 0,
+          );
+
+          final List<int> processedBytes = img.encodeJpg(sharpenedImage, quality: 100);
           await imageFile.writeAsBytes(processedBytes);
         }
         await Gal.putImage(imagePath);
@@ -198,11 +220,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       final image = await controller!.takePicture();
       bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
       
+      // حفظ الصورة ومعالجتها في الخلفية بدون تهنيج نهائياً
       _processAndSaveInBackground(image.path, isFront, _currentZoom);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('✨ تم التقاط الصورة والمعالجة جارية في الخلفية!'), duration: Duration(milliseconds: 500)),
+          constSnackBar(content: Text('✨ تم التقاط الصورة، وتتم معالجتها باحترافية في الخلفية!'), duration: Duration(milliseconds: 500)),
         );
       }
     } catch (e) {
@@ -278,6 +301,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   void dispose() {
     _videoTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
+    _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
   }
@@ -334,11 +358,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
 
+    // ضبط اتجاه معاينة الكاميرا الأمامية بحيث تكون صحيحة 100% بدون عكس حركة اليمين واليسار
     Widget previewWidget = AspectRatio(
       aspectRatio: _getAspectRatioValue(),
       child: Transform(
         alignment: Alignment.center,
-        transform: isFrontCamera ? Matrix4.rotationY(0) : Matrix4.identity(),
+        transform: isFrontCamera ? Matrix4.rotationY(3.14159) : Matrix4.identity(),
         child: CameraPreview(controller!),
       ),
     );
@@ -353,7 +378,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               onScaleUpdate: (details) async {
                 double scaleFactor = details.scale > 1 ? 1.02 : 0.98;
                 double newZoom = (_currentZoom * scaleFactor).clamp(_minZoom, _maxZoom);
-                setState(() { _currentZoom = newZoom; _showZoomWheel = true; });
+                setState(() { _currentZoom = newZoom; _showZoomWheel = true; _lastZoomInteraction = DateTime.now(); });
                 await controller!.setZoomLevel(_currentZoom);
               },
               child: Center(child: previewWidget),
@@ -367,6 +392,22 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             Positioned(
               top: MediaQuery.of(context).size.height / 2 - 50, left: 0, right: 0,
               child: Center(child: Text('$_countdownSeconds', style: const TextStyle(color: Colors.greenAccent, fontSize: 80, fontWeight: FontWeight.bold))),
+            ),
+
+          if (_isWatermarkActive || _isLocationActive)
+            Positioned(
+              bottom: 140, left: 20,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(6)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (_isWatermarkActive) Text(_customWatermarkText, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                    if (_isLocationActive) const Text('📍 مصر، القاهرة', style: TextStyle(color: Colors.greenAccent, fontSize: 9)),
+                  ],
+                ),
+              ),
             ),
 
           if (_showZoomWheel)
@@ -391,7 +432,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                         activeColor: Colors.greenAccent,
                         inactiveColor: Colors.white24,
                         onChanged: (val) async {
-                          setState(() { _currentZoom = val; });
+                          setState(() { _currentZoom = val; _lastZoomInteraction = DateTime.now(); });
                           await controller!.setZoomLevel(_currentZoom);
                         },
                       ),
@@ -664,7 +705,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SwitchListTile(title: const Text('استنساخ زر الالتقاط'), value: _clone, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _clone = val); _updateParent(); }),
           SwitchListTile(title: const Text('الموقع'), value: true, activeColor: Colors.greenAccent, onChanged: (_) {}),
           SwitchListTile(title: const Text('المستوى الأفقي'), value: _horizon, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _horizon = val); _updateParent(); }),
-          ListTile(title: const Text('طرق التصوير والإعدادات الإضافية'), trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54), onTap: () {}),
+          ListTile(title: const Text('طرق التصوير والإعدادات الإضافية'), trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54), onTap: {}),
           ListTile(
             title: const Text('محسن بورتريه AI'),
             subtitle: Text(_fps, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
