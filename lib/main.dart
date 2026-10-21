@@ -52,7 +52,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   double _maxZoom = 15.0;
   
   bool _showZoomWheel = false;
-  DateTime _lastZoomInteraction = DateTime.now();
 
   String _currentMode = 'PHOTO';
   bool _isRecording = false;
@@ -62,7 +61,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   int _videoSeconds = 0;
   bool _showExpandedPanel = false;
 
-  // الإعدادات التفاعلية
+  // الإعدادات الكاملة
   bool _isHdrActive = true;
   bool _isTimerActive = false;
   int _selectedTimerSeconds = 3;
@@ -72,7 +71,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _isAiFocusEnabled = true;
   bool _isLocationActive = false;
 
-  // إعدادات لوحة التحكم
+  // إعدادات لوحة التحكم الكاملة
   bool _shutterSound = true;
   bool _cloneShutterButton = false;
   bool _horizonLevel = false;
@@ -81,13 +80,11 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _qrScannerActive = true;
 
   String _selectedAspectRatio = '4:3';
-  late AnimationController _flashAnimController;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _flashAnimController = AnimationController(vsync: this, duration: const Duration(milliseconds: 150));
     _requestPermissionAndInit();
   }
 
@@ -152,7 +149,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // معالجة مستقرة ومضمونة في الخلفية لتفادي أخطاء البناء ومعالجة الوضوح والزوم
   void _processAndSaveInBackground(String imagePath, bool isFront, double zoomLevel) {
     Future.microtask(() async {
       try {
@@ -165,13 +161,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             capturedImage = img.flipHorizontal(capturedImage);
           }
 
-          // ضبط الألوان والتعريض بذكاء لمنع الإضاءة الفاقعة
           if (_flashMode == FlashMode.torch || _flashMode == FlashMode.always) {
             capturedImage = img.adjustColor(capturedImage, brightness: 0.92, contrast: 1.1, saturation: 1.05);
           } else if (zoomLevel > 2.0) {
-            capturedImage = img.adjustColor(capturedImage, brightness: 0.95, contrast: 1.25, saturation: 1.1);
-          } else if (_isHdrActive) {
-            capturedImage = img.adjustColor(capturedImage, contrast: 1.15, brightness: 1.0, saturation: 1.05);
+            capturedImage = img.adjustColor(capturedImage, brightness: 0.95, contrast: 1.2, saturation: 1.1);
           }
 
           final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 95);
@@ -215,7 +208,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('✨ تم التقاط الصورة، وتتم معالجتها في المعرض الآن!'), duration: Duration(milliseconds: 500)),
+          const SnackBar(content: Text('✨ تم التقاط الصورة والمعالجة جارية في الخلفية!'), duration: Duration(milliseconds: 500)),
         );
       }
     } catch (e) {
@@ -291,7 +284,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   void dispose() {
     _videoTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
-    _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
   }
@@ -367,7 +359,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               onScaleUpdate: (details) async {
                 double scaleFactor = details.scale > 1 ? 1.02 : 0.98;
                 double newZoom = (_currentZoom * scaleFactor).clamp(_minZoom, _maxZoom);
-                setState(() { _currentZoom = newZoom; _showZoomWheel = true; _lastZoomInteraction = DateTime.now(); });
+                setState(() { _currentZoom = newZoom; _showZoomWheel = true; });
                 await controller!.setZoomLevel(_currentZoom);
               },
               child: Center(child: previewWidget),
@@ -381,22 +373,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             Positioned(
               top: MediaQuery.of(context).size.height / 2 - 50, left: 0, right: 0,
               child: Center(child: Text('$_countdownSeconds', style: const TextStyle(color: Colors.greenAccent, fontSize: 80, fontWeight: FontWeight.bold))),
-            ),
-
-          if (_isWatermarkActive || _isLocationActive)
-            Positioned(
-              bottom: 140, left: 20,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(6)),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (_isWatermarkActive) Text(_customWatermarkText, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
-                    if (_isLocationActive) const Text('📍 مصر، القاهرة', style: TextStyle(color: Colors.greenAccent, fontSize: 9)),
-                  ],
-                ),
-              ),
             ),
 
           if (_showZoomWheel)
@@ -421,7 +397,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                         activeColor: Colors.greenAccent,
                         inactiveColor: Colors.white24,
                         onChanged: (val) async {
-                          setState(() { _currentZoom = val; _lastZoomInteraction = DateTime.now(); });
+                          setState(() { _currentZoom = val; });
                           await controller!.setZoomLevel(_currentZoom);
                         },
                       ),
@@ -616,7 +592,6 @@ class GridPainter extends CustomPainter {
     final paint = Paint()..color = Colors.white24..strokeWidth = 1.0;
     double thirdW = size.width / 3;
     double thirdH = size.height / 3;
-
     canvas.drawLine(Offset(thirdW, 0), Offset(thirdW, size.height), paint);
     canvas.drawLine(Offset(thirdW * 2, 0), Offset(thirdW * 2, size.height), paint);
     canvas.drawLine(Offset(0, thirdH), Offset(size.width, thirdH), paint);
