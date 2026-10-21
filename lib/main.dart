@@ -53,8 +53,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _showZoomWheel = false;
   DateTime _lastZoomInteraction = DateTime.now();
 
-  String _currentMode = 'PHOTO'; // اقتصرت على VIDEO و PHOTO فقط
+  String _currentMode = 'PHOTO'; // تم التقليل إلى PHOTO و VIDEO فقط
   bool _isRecording = false;
+  bool _isProcessing = false;
   int _countdownSeconds = 0;
   bool _showFlashEffect = false;
 
@@ -63,6 +64,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   bool _showExpandedPanel = false;
 
+  // الإعدادات التفاعلية
   bool _isHdrActive = true;
   bool _isTimerActive = false;
   int _selectedTimerSeconds = 3;
@@ -72,6 +74,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _isAiFocusEnabled = true;
   bool _isLocationActive = false;
 
+  // إعدادات لوحة التحكم
   bool _shutterSound = true;
   bool _cloneShutterButton = false;
   bool _horizonLevel = false;
@@ -128,6 +131,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     try {
       await controller!.initialize();
+      
       _minZoom = await controller!.getMinZoomLevel();
       double hardwareMaxZoom = await controller!.getMaxZoomLevel();
       _maxZoom = hardwareMaxZoom > 1.0 ? hardwareMaxZoom : 4.0;
@@ -149,72 +153,49 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // فتح معرض الصور الفعلي الخاص بالموبايل واستعراض أحدث الصور بداخل التطبيق
+  // فتح أحدث الصور من المعرض
   Future<void> _openDeviceGallery() async {
     try {
       final List<AssetPathEntity> albums = await PhotoManager.getAssetPathList(type: RequestType.image);
       if (albums.isNotEmpty) {
         final AssetPathEntity recentAlbum = albums.first;
-        final List<AssetEntity> images = await recentAlbum.getAssetListRange(start: 0, end: 20);
-        if (images.isNotEmpty && mounted) {
-          showModalBottomSheet(
-            context: context,
-            backgroundColor: Colors.black87,
-            builder: (context) => Container(
-              height: 300,
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                children: [
-                  const Text('أحدث الصور في المعرض', style: TextStyle(color: Colors.greenAccent, fontSize: 14, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 10),
-                  Expanded(
-                    child: GridView.builder(
-                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 4, mainAxisSpacing: 8, crossAxisSpacing: 8),
-                      itemCount: images.length,
-                      itemBuilder: (context, index) {
-                        return FutureBuilder<File?>(
-                          future: images[index].file,
-                          builder: (context, snapshot) {
-                            if (snapshot.connectionState == ConnectionState.done && snapshot.data != null) {
-                              return ClipRRect(
-                                borderRadius: BorderRadius.circular(8),
-                                child: Image.file(snapshot.data!, fit: BoxFit.cover),
-                              );
-                            }
-                            return Container(color: Colors.grey[800]);
-                          },
-                        );
-                      },
+        final List<AssetEntity> images = await recentAlbum.getAssetListRange(start: 0, end: 1);
+        if (images.isNotEmpty) {
+          final File? file = await images.first.file;
+          if (file != null && mounted) {
+            showDialog(
+              context: context,
+              builder: (context) => Dialog(
+                backgroundColor: Colors.black,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    AppBar(
+                      backgroundColor: Colors.black,
+                      title: const Text('معرض الصور', style: TextStyle(color: Colors.white, fontSize: 14)),
+                      leading: IconButton(icon: const Icon(Icons.close, color: Colors.white), onPressed: () => Navigator.pop(context)),
                     ),
-                  ),
-                ],
+                    Expanded(child: Image.file(file)),
+                  ],
+                ),
               ),
-            ),
-          );
-          return;
+            );
+            return;
+          }
         }
       }
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(constSnackBar(content: Text('لا توجد صور في المعرض')));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('لا توجد صور حديثة في المعرض')));
       }
     } catch (e) {
       debugPrint('Error opening gallery: $e');
     }
   }
 
-  // معالجة فورية في الخلفية الحقيقية بدون أي تأثير على سرعة الكاميرا أو تهنيج التليفون
+  // حفظ في الخلفية فورياً وبدون معالجات تبوظ الجودة
   void _saveImageInBackground(String imagePath, bool isFront) {
     Future.microtask(() async {
       try {
-        if (isFront) {
-          final File imageFile = File(imagePath);
-          final List<int> bytes = await imageFile.readAsBytes();
-          img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
-          if (capturedImage != null) {
-            capturedImage = img.flipHorizontal(capturedImage);
-            await imageFile.writeAsBytes(img.encodeJpg(capturedImage, quality: 100));
-          }
-        }
         await Gal.putImage(imagePath);
       } catch (e) {
         debugPrint('Background save error: $e');
@@ -244,7 +225,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         HapticFeedback.heavyImpact();
       }
 
-      // إعطاء مؤشر بصري فوري (وميض أبيض) لتعلم المستخدم أن الصورة لقطت في الحال بدون أي تجميد
       setState(() {
         _showFlashEffect = true;
         _showExpandedPanel = false;
@@ -253,7 +233,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         if (mounted) setState(() { _showFlashEffect = false; });
       });
 
-      // التقاط الصورة وحفظها في الخلفية فوراً بدون إيقاف الشاشة أو تهنيج الكاميرا
       final image = await controller!.takePicture();
       bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
       
@@ -293,7 +272,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   void dispose() {
     _videoTimer?.cancel();
-    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.removeObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
@@ -381,6 +360,22 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             Positioned(
               top: MediaQuery.of(context).size.height / 2 - 50, left: 0, right: 0,
               child: Center(child: Text('$_countdownSeconds', style: const TextStyle(color: Colors.greenAccent, fontSize: 80, fontWeight: FontWeight.bold))),
+            ),
+
+          if (_isWatermarkActive || _isLocationActive)
+            Positioned(
+              bottom: 140, left: 20,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(6)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (_isWatermarkActive) Text(_customWatermarkText, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                    if (_isLocationActive) const Text('📍 مصر، القاهرة', style: TextStyle(color: Colors.greenAccent, fontSize: 9)),
+                  ],
+                ),
+              ),
             ),
 
           if (_showZoomWheel)
@@ -526,7 +521,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   height: 30,
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
-                    children: ['PHOTO', 'VIDEO'].map((mode) { // اقتصرت على فيديو وتصوير فقط حسب طلبك
+                    children: ['PHOTO', 'VIDEO'].map((mode) {
                       bool isSelected = _currentMode == mode;
                       return Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16.0),
@@ -543,7 +538,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
                     GestureDetector(
-                      onTap: _openDeviceGallery, // تم ربط زر المعرض بالمعرض الحقيقي للموبايل
+                      onTap: _openDeviceGallery,
                       child: Container(
                         height: 45, width: 45,
                         decoration: BoxDecoration(color: Colors.grey[900], borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.white30)),
@@ -679,7 +674,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SwitchListTile(title: const Text('استنساخ زر الالتقاط'), value: _clone, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _clone = val); _updateParent(); }),
           SwitchListTile(title: const Text('الموقع'), value: true, activeColor: Colors.greenAccent, onChanged: (_) {}),
           SwitchListTile(title: const Text('المستوى الأفقي'), value: _horizon, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _horizon = val); _updateParent(); }),
-          ListTile(title: const Text('طرق التصوير والإعدادات الإضافية'), trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54), onTap: {}),
+          ListTile(title: const Text('طرق التصوير والإعدادات الإضافية'), trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54), onTap: () {}),
           ListTile(
             title: const Text('محسن بورتريه AI'),
             subtitle: Text(_fps, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
