@@ -55,8 +55,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   String _currentMode = 'PHOTO';
   bool _isRecording = false;
-  bool _isProcessing = false;
   int _countdownSeconds = 0;
+  bool _showFlashEffect = false; // تأثير ومضة الالتقاط السريعة
 
   Timer? _videoTimer;
   int _videoSeconds = 0;
@@ -127,7 +127,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     try {
       await controller!.initialize();
-      
       _minZoom = await controller!.getMinZoomLevel();
       double hardwareMaxZoom = await controller!.getMaxZoomLevel();
       _maxZoom = hardwareMaxZoom > 1.0 ? hardwareMaxZoom : 4.0;
@@ -149,34 +148,38 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  Future<String> _enhanceAndSharpenImage(String imagePath, bool isFront, double zoomLevel) async {
-    try {
-      final File imageFile = File(imagePath);
-      final List<int> bytes = await imageFile.readAsBytes();
-      img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
+  // معالجة فائقة في الخلفية بدون أي تعليق للتليفون وإبراز الألوان والكتابة بدقة 4K
+  void _processAndSaveInBackground(String imagePath, bool isFront, double zoomLevel) {
+    Future.microtask(() async {
+      try {
+        final File imageFile = File(imagePath);
+        final List<int> bytes = await imageFile.readAsBytes();
+        img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
 
-      if (capturedImage != null) {
-        if (isFront) {
-          capturedImage = img.flipHorizontal(capturedImage);
+        if (capturedImage != null) {
+          if (isFront) {
+            capturedImage = img.flipHorizontal(capturedImage);
+          }
+
+          // تحسين الألوان، التشبع، وإبراز تفاصيل الكتابة بذكاء سواء للصور القريبة أو البعيدة
+          if (zoomLevel > 1.5) {
+            capturedImage = img.adjustColor(capturedImage, contrast: 1.25, brightness: 1.03, saturation: 1.15);
+          } else {
+            capturedImage = img.adjustColor(capturedImage, contrast: 1.15, brightness: 1.02, saturation: 1.1);
+          }
+
+          final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 100);
+          await imageFile.writeAsBytes(processedBytes);
         }
-
-        if (zoomLevel > 2.0) {
-          capturedImage = img.adjustColor(capturedImage, contrast: 1.15, brightness: 1.02, saturation: 1.08);
-        } else if (_isHdrActive) {
-          capturedImage = img.adjustColor(capturedImage, contrast: 1.1, brightness: 1.02, saturation: 1.05);
-        }
-
-        final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 100);
-        await imageFile.writeAsBytes(processedBytes);
+        await Gal.putImage(imagePath);
+      } catch (e) {
+        debugPrint('Background processing error: $e');
       }
-    } catch (e) {
-      debugPrint('Error processing image: $e');
-    }
-    return imagePath;
+    });
   }
 
   Future<void> _captureAction() async {
-    if (controller == null || !controller!.value.isInitialized || _isProcessing) return;
+    if (controller == null || !controller!.value.isInitialized) return;
 
     if (_currentMode == 'VIDEO') {
       _toggleVideoRecording();
@@ -197,23 +200,23 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         HapticFeedback.heavyImpact();
       }
 
-      setState(() { _isProcessing = true; _showExpandedPanel = false; });
+      // إظهار ومضة بيضاء سريعة لتعلم المستخدم أن الصورة لقطت في الحال بدون أي تجميد
+      setState(() {
+        _showFlashEffect = true;
+        _showExpandedPanel = false;
+      });
+      Timer(const Duration(milliseconds: 100), () {
+        if (mounted) setState(() { _showFlashEffect = false; });
+      });
 
+      // التقاط فوري وتسليم المعالجة للخلفية تماماً
       final image = await controller!.takePicture();
       bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
       
-      final String enhancedPath = await _enhanceAndSharpenImage(image.path, isFront, _currentZoom);
-      await Gal.putImage(enhancedPath);
+      _processAndSaveInBackground(image.path, isFront, _currentZoom);
 
-      if (mounted) {
-        setState(() { _isProcessing = false; });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('✨ تمت التقاط الصورة وحفظها بنجاح!'), duration: Duration(milliseconds: 500)),
-        );
-      }
     } catch (e) {
       debugPrint('Error capturing: $e');
-      if (mounted) setState(() { _isProcessing = false; });
     }
   }
 
@@ -246,7 +249,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   void dispose() {
     _videoTimer?.cancel();
-    WidgetsBinding.instance.removeObserver(this);
+    WidgetsBinding.instance.addObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
@@ -324,6 +327,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             ),
           ),
 
+          // تأثير الوميض الأبيض السريع عند الالتقاط
+          if (_showFlashEffect)
+            Positioned.fill(child: Container(color: Colors.white.withOpacity(0.7))),
+
           if (_isGridActive)
             Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: GridPainter()))),
 
@@ -331,22 +338,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             Positioned(
               top: MediaQuery.of(context).size.height / 2 - 50, left: 0, right: 0,
               child: Center(child: Text('$_countdownSeconds', style: const TextStyle(color: Colors.greenAccent, fontSize: 80, fontWeight: FontWeight.bold))),
-            ),
-
-          if (_isWatermarkActive || _isLocationActive)
-            Positioned(
-              bottom: 140, left: 20,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(6)),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (_isWatermarkActive) Text(_customWatermarkText, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
-                    if (_isLocationActive) const Text('📍 مصر، القاهرة', style: TextStyle(color: Colors.greenAccent, fontSize: 9)),
-                  ],
-                ),
-              ),
             ),
 
           if (_showZoomWheel)
@@ -642,7 +633,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SwitchListTile(title: const Text('استنساخ زر الالتقاط'), value: _clone, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _clone = val); _updateParent(); }),
           SwitchListTile(title: const Text('الموقع'), value: true, activeColor: Colors.greenAccent, onChanged: (_) {}),
           SwitchListTile(title: const Text('المستوى الأفقي'), value: _horizon, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _horizon = val); _updateParent(); }),
-          ListTile(title: const Text('طرق التصوير والإعدادات الإضافية'), trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54), onTap: () {}),
+          ListTile(title: const Text('طرق التصوير والإعدادات الإضافية'), trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54), onTap: {}),
           ListTile(
             title: const Text('محسن بورتريه AI'),
             subtitle: Text(_fps, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
