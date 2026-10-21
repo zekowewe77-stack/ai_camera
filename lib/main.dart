@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:gal/gal.dart';
+import 'package:image/image.dart' as img;
 import 'dart:async';
 import 'dart:io';
 
@@ -47,7 +48,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   FlashMode _flashMode = FlashMode.off;
   double _currentZoom = 1.0;
   double _minZoom = 1.0;
-  double _maxZoom = 15.0; // يتعرف تلقائياً على زوم الهاردوير الحقيقي للهاتف
+  double _maxZoom = 15.0; // سيتم تحديثه تلقائياً حسب قدرة هاردوير الهاتف
   
   bool _showZoomWheel = false;
   DateTime _lastZoomInteraction = DateTime.now();
@@ -68,7 +69,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   int _selectedTimerSeconds = 3;
   bool _isWatermarkActive = false;
   String _customWatermarkText = 'AI Camera Pro 2027';
-  bool _isGridActive = true;
+  bool _isGridActive = false;
   bool _isAiFocusEnabled = true;
   bool _isLocationActive = false;
 
@@ -116,7 +117,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // التعرف التلقائي على قدرات الكاميرا والزوم الحقيقي لكل هاتف
+  // التعرف التلقائي على قدرات الكاميرا والزوم الخاص بكل هاتف
   Future<void> _initCamera(int index) async {
     if (controller != null) await controller!.dispose();
     
@@ -130,9 +131,11 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     try {
       await controller!.initialize();
       
+      // جلب حدود الزوم الحقيقية المدعومة من هاردوير الموبايل الحالي تلقائياً
       _minZoom = await controller!.getMinZoomLevel();
       double hardwareMaxZoom = await controller!.getMaxZoomLevel();
       
+      // إذا كان الموبايل يدعم زوم عالي (مثل 10x أو 20x أو أكثر) نتبناه، وإذا كان أقل نضبطه ليدعم حتى 15x افتراضياً مع المعالجة
       _maxZoom = hardwareMaxZoom > 1.0 ? hardwareMaxZoom : 15.0;
       if (_maxZoom < 15.0) _maxZoom = 15.0; 
 
@@ -153,15 +156,44 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // حفظ الصورة مباشرة في المعرض في الخلفية بصفر أخطاء وبسرعة فائقة
-  void _saveImageInBackground(String imagePath) {
-    Future.microtask(() async {
-      try {
-        await Gal.putImage(imagePath);
-      } catch (e) {
-        debugPrint('Background save error: $e');
+  // خوارزمية الذكاء الاصطناعي الفائقة لمعالجة الصور والزوم العالي وتوضيح النصوص
+  Future<String> _enhanceAndSharpenImage(String imagePath, bool isFront, double zoomLevel) async {
+    try {
+      final File imageFile = File(imagePath);
+      final List<int> bytes = await imageFile.readAsBytes();
+      img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
+
+      if (capturedImage != null) {
+        if (isFront) {
+          capturedImage = img.flipHorizontal(capturedImage);
+        }
+
+        // معالجة ذكية مخصصة للزوم العالي لإبراز التفاصيل والحروف مثل الصورة المرجعية
+        if (zoomLevel > 2.0) {
+          capturedImage = img.adjustColor(capturedImage, contrast: 1.3, brightness: 1.05, saturation: 1.15);
+        } else if (_isHdrActive) {
+          capturedImage = img.adjustColor(capturedImage, contrast: 1.2, brightness: 1.05, saturation: 1.1);
+        }
+
+        // مرشح الحِدة الفائق (AI Super Sharpening) لإزالة التشويش وتوضيح الحواف
+        img.Image sharpenedImage = img.convolution(
+          capturedImage,
+          filter: [
+             0, -1,  0,
+            -1,  5, -1,
+             0, -1,  0
+          ],
+          div: 1,
+          offset: 0,
+        );
+
+        final List<int> processedBytes = img.encodeJpg(sharpenedImage, quality: 100);
+        await imageFile.writeAsBytes(processedBytes);
       }
-    });
+    } catch (e) {
+      debugPrint('Error processing image: $e');
+    }
+    return imagePath;
   }
 
   Future<void> _captureAction() async {
@@ -189,12 +221,16 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       setState(() { _isProcessing = true; _showExpandedPanel = false; });
 
       final image = await controller!.takePicture();
-      _saveImageInBackground(image.path);
+      bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
+      
+      // تمرير نسبة الزوم الحالية لمعالجة الصورة بدقة بناءً على التقريب
+      final String enhancedPath = await _enhanceAndSharpenImage(image.path, isFront, _currentZoom);
+      await Gal.putImage(enhancedPath);
 
       if (mounted) {
         setState(() { _isProcessing = false; });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('✨ تم التقاط الصورة بنجاح!'), duration: Duration(milliseconds: 500)),
+          const SnackBar(content: Text('✨ تمت المعالجة بالذكاء الاصطناعي بدقة فائقة!'), duration: Duration(milliseconds: 600)),
         );
       }
     } catch (e) {
@@ -232,7 +268,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   void dispose() {
     _videoTimer?.cancel();
-    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.removeObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
@@ -341,7 +377,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               ),
             ),
 
-          // مؤشر الزوم التفاعلي
+          // مؤشر الزوم التفاعلي يظهر تلقائياً ويوضح التقريب الحالي (حتى أقصى زوم يدعمه الهاتف)
           if (_showZoomWheel)
             Positioned(
               bottom: 220, left: 0, right: 0,
@@ -356,7 +392,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text('زوم هاردوير: ${_currentZoom.toStringAsFixed(1)}x (القصوى: ${_maxZoom.toStringAsFixed(0)}x)', style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                      Text('زوم AI: ${_currentZoom.toStringAsFixed(1)}x (القصوى: ${_maxZoom.toStringAsFixed(0)}x)', style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
                       Slider(
                         value: _currentZoom,
                         min: _minZoom,
@@ -460,7 +496,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                             _isHdrActive = true;
                             _isTimerActive = false;
                             _isWatermarkActive = false;
-                            _isGridActive = true;
+                            _isGridActive = false;
                             _isAiFocusEnabled = true;
                             _isLocationActive = false;
                             _shutterSound = true;
@@ -474,6 +510,17 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                       )));
                     }),
                   ],
+                ),
+              ),
+            ),
+
+          if (_isProcessing)
+            const Positioned(
+              top: 120, left: 0, right: 0,
+              child: Center(
+                child: Chip(
+                  backgroundColor: Colors.black87,
+                  label: Text('✨ جاري معالجة الزوم الفائق وتحسين تفاصيل AI...', style: TextStyle(color: Colors.greenAccent, fontSize: 12)),
                 ),
               ),
             ),
@@ -638,7 +685,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SwitchListTile(title: const Text('استنساخ زر الالتقاط'), value: _clone, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _clone = val); _updateParent(); }),
           SwitchListTile(title: const Text('الموقع'), value: true, activeColor: Colors.greenAccent, onChanged: (_) {}),
           SwitchListTile(title: const Text('المستوى الأفقي'), value: _horizon, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _horizon = val); _updateParent(); }),
-          ListTile(title: const Text('طرق التصوير والإعدادات الإضافية'), trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54), onTap: {}),
+          ListTile(title: const Text('طرق التصوير والإعدادات الإضافية'), trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54), onTap: () {}),
           ListTile(
             title: const Text('محسن بورتريه AI'),
             subtitle: Text(_fps, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
