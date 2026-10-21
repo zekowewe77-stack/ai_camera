@@ -48,16 +48,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   FlashMode _flashMode = FlashMode.off;
   double _currentZoom = 1.0;
   double _minZoom = 1.0;
-  double _maxZoom = 15.0;
+  double _maxZoom = 15.0; // سيتم تحديثه تلقائياً حسب قدرة هاردوير الهاتف
   
   bool _showZoomWheel = false;
   DateTime _lastZoomInteraction = DateTime.now();
 
   String _currentMode = 'PHOTO';
   bool _isRecording = false;
-  bool _isAiFocusEnabled = true;
-  bool _isTimerActive = false;
-  bool _isGridActive = false;
   bool _isProcessing = false;
   int _countdownSeconds = 0;
 
@@ -65,38 +62,33 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   int _videoSeconds = 0;
 
   bool _showExpandedPanel = false;
+
+  // الإعدادات التفاعلية
   bool _isHdrActive = true;
+  bool _isTimerActive = false;
+  int _selectedTimerSeconds = 3;
   bool _isWatermarkActive = false;
+  String _customWatermarkText = 'AI Camera Pro 2027';
+  bool _isGridActive = false;
+  bool _isAiFocusEnabled = true;
+  bool _isLocationActive = false;
 
-  String _videoResolution = '4K';
+  // إعدادات لوحة التحكم
+  bool _shutterSound = true;
+  bool _cloneShutterButton = false;
+  bool _horizonLevel = false;
+  bool _dirtyLensNotice = true;
+  String _portraitFps = 'تلقائي';
+  bool _qrScannerActive = true;
+
   String _selectedAspectRatio = '4:3';
-
-  bool _showApertureSlider = false;
-  double _selectedAperture = 4.0;
-  final List<double> _apertureValues = [1.4, 2.0, 2.8, 4.0, 5.6, 8.0, 11.0, 16.0];
-  
-  bool _showFocusBox = false;
-  Offset _focusPoint = Offset.zero;
-  double _exposureOffset = 0.0;
-  double _minAvailableExposureOffset = 0.0;
-  double _maxAvailableExposureOffset = 0.0;
-  double _dragStartY = 0.0;
-  DateTime _lastFocusTime = DateTime.now();
-
   late AnimationController _flashAnimController;
-  late Animation<double> _flashAnimation;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    
-    _flashAnimController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 150),
-    );
-    _flashAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(_flashAnimController);
-
+    _flashAnimController = AnimationController(vsync: this, duration: const Duration(milliseconds: 150));
     _requestPermissionAndInit();
   }
 
@@ -125,38 +117,31 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
+  // التعرف التلقائي على قدرات الكاميرا والزوم الخاص بكل هاتف
   Future<void> _initCamera(int index) async {
     if (controller != null) await controller!.dispose();
     
-    ResolutionPreset preset = ResolutionPreset.max;
-    if (_videoResolution == '4K') {
-      preset = ResolutionPreset.max;
-    } else if (_videoResolution == '2K') {
-      preset = ResolutionPreset.ultraHigh;
-    } else {
-      preset = ResolutionPreset.high;
-    }
-
     controller = CameraController(
       cameras[index],
-      preset,
+      ResolutionPreset.max,
       enableAudio: true,
       imageFormatGroup: ImageFormatGroup.jpeg,
     );
 
     try {
       await controller!.initialize();
-      _minZoom = await controller!.getMinZoomLevel();
-      _maxZoom = await controller!.getMaxZoomLevel();
-      if (_maxZoom < 15.0) _maxZoom = 15.0;
       
+      // جلب حدود الزوم الحقيقية المدعومة من هاردوير الموبايل الحالي تلقائياً
+      _minZoom = await controller!.getMinZoomLevel();
+      double hardwareMaxZoom = await controller!.getMaxZoomLevel();
+      
+      // إذا كان الموبايل يدعم زوم عالي (مثل 10x أو 20x أو أكثر) نتبناه، وإذا كان أقل نضبطه ليدعم حتى 15x افتراضياً مع المعالجة
+      _maxZoom = hardwareMaxZoom > 1.0 ? hardwareMaxZoom : 15.0;
+      if (_maxZoom < 15.0) _maxZoom = 15.0; 
+
       _currentZoom = _minZoom;
       await controller!.setZoomLevel(_currentZoom);
       await controller!.setFlashMode(_flashMode);
-
-      _minAvailableExposureOffset = await controller!.getMinExposureOffset();
-      _maxAvailableExposureOffset = await controller!.getMaxExposureOffset();
-      _exposureOffset = 0.0;
 
       if (mounted) setState(() {});
     } catch (e) {
@@ -171,15 +156,26 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // خوارزمية معالجة الحِدة والتحسين الفائق للتغلب على الكاميرا الأصلية في الزوم
-  Future<String> _enhanceAndSharpenImage(String imagePath) async {
+  // خوارزمية الذكاء الاصطناعي الفائقة لمعالجة الصور والزوم العالي وتوضيح النصوص
+  Future<String> _enhanceAndSharpenImage(String imagePath, bool isFront, double zoomLevel) async {
     try {
       final File imageFile = File(imagePath);
       final List<int> bytes = await imageFile.readAsBytes();
       img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
 
       if (capturedImage != null) {
-        // مصفوفة تعزيز الحواف وتوضيح النصوص
+        if (isFront) {
+          capturedImage = img.flipHorizontal(capturedImage);
+        }
+
+        // معالجة ذكية مخصصة للزوم العالي لإبراز التفاصيل والحروف مثل الصورة المرجعية
+        if (zoomLevel > 2.0) {
+          capturedImage = img.adjustColor(capturedImage, contrast: 1.3, brightness: 1.05, saturation: 1.15);
+        } else if (_isHdrActive) {
+          capturedImage = img.adjustColor(capturedImage, contrast: 1.2, brightness: 1.05, saturation: 1.1);
+        }
+
+        // مرشح الحِدة الفائق (AI Super Sharpening) لإزالة التشويش وتوضيح الحواف
         img.Image sharpenedImage = img.convolution(
           capturedImage,
           filter: [
@@ -191,18 +187,11 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
           offset: 0,
         );
 
-        // تعديل التباين والألوان لإبراز التفاصيل الدقيقة
-        sharpenedImage = img.adjustColor(
-          sharpenedImage,
-          contrast: 1.15,
-          saturation: 1.05,
-        );
-
         final List<int> processedBytes = img.encodeJpg(sharpenedImage, quality: 100);
         await imageFile.writeAsBytes(processedBytes);
       }
     } catch (e) {
-      debugPrint('Error sharpening image: $e');
+      debugPrint('Error processing image: $e');
     }
     return imagePath;
   }
@@ -216,28 +205,32 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
 
     if (_isTimerActive) {
-      setState(() { _countdownSeconds = 3; });
-      for (int i = 3; i > 0; i--) {
+      setState(() { _countdownSeconds = _selectedTimerSeconds; });
+      for (int i = _selectedTimerSeconds; i > 0; i--) {
         await Future.delayed(const Duration(seconds: 1));
         if (mounted) setState(() { _countdownSeconds = i - 1; });
       }
     }
 
     try {
-      _flashAnimController.forward().then((_) => _flashAnimController.reverse());
-      SystemSound.play(SystemSoundType.click);
-      HapticFeedback.heavyImpact();
+      if (_shutterSound) {
+        SystemSound.play(SystemSoundType.click);
+        HapticFeedback.heavyImpact();
+      }
 
       setState(() { _isProcessing = true; _showExpandedPanel = false; });
 
       final image = await controller!.takePicture();
-      final String enhancedPath = await _enhanceAndSharpenImage(image.path);
+      bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
+      
+      // تمرير نسبة الزوم الحالية لمعالجة الصورة بدقة بناءً على التقريب
+      final String enhancedPath = await _enhanceAndSharpenImage(image.path, isFront, _currentZoom);
       await Gal.putImage(enhancedPath);
 
       if (mounted) {
         setState(() { _isProcessing = false; });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('✨ تم التقاط ومعالجة الصورة بجودة فائقة!'), duration: Duration(milliseconds: 700)),
+          const SnackBar(content: Text('✨ تمت المعالجة بالذكاء الاصطناعي بدقة فائقة!'), duration: Duration(milliseconds: 600)),
         );
       }
     } catch (e) {
@@ -251,44 +244,24 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     if (_isRecording) {
       _videoTimer?.cancel();
       final file = await controller!.stopVideoRecording();
-      setState(() { 
-        _isRecording = false; 
-        _videoSeconds = 0;
-      });
+      setState(() { _isRecording = false; _videoSeconds = 0; });
       await Gal.putVideo(file.path);
     } else {
       await controller!.startVideoRecording();
-      setState(() { 
-        _isRecording = true; 
-        _videoSeconds = 0;
-      });
+      setState(() { _isRecording = true; _videoSeconds = 0; });
       _videoTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-        setState(() {
-          _videoSeconds++;
-        });
+        setState(() { _videoSeconds++; });
       });
     }
   }
 
-  String _formatVideoTime(int seconds) {
-    int minutes = seconds ~/ 60;
-    int remainingSeconds = seconds % 60;
-    String minStr = minutes.toString().padLeft(2, '0');
-    String secStr = remainingSeconds.toString().padLeft(2, '0');
-    return "00:$minStr:$secStr";
-  }
-
   double _getAspectRatioValue() {
     switch (_selectedAspectRatio) {
-      case '1:1':
-        return 1.0;
-      case '16:9':
-        return 16.5 / 9;
-      case 'Full':
-        return 9 / 19.5;
+      case '1:1': return 1.0;
+      case '16:9': return 16.5 / 9;
+      case 'Full': return 9 / 19.5;
       case '4:3':
-      default:
-        return 3 / 4;
+      default: return 3 / 4;
     }
   }
 
@@ -301,13 +274,54 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     super.dispose();
   }
 
+  void _showWatermarkDialog() {
+    TextEditingController textController = TextEditingController(text: _customWatermarkText);
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.grey[900],
+        title: const Text('إعدادات العلامة المائية المخصصة', style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: TextField(
+          controller: textController,
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(hintText: 'اكتب النص هنا...', hintStyle: TextStyle(color: Colors.white54)),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء', style: TextStyle(color: Colors.redAccent))),
+          TextButton(onPressed: () {
+            setState(() { _customWatermarkText = textController.text; _isWatermarkActive = true; });
+            Navigator.pop(context);
+          }, child: const Text('حفظ', style: TextStyle(color: Colors.greenAccent))),
+        ],
+      ),
+    );
+  }
+
+  void _showTimerDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.grey[900],
+        title: const Text('اختر وقت المؤقت', style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(title: const Text('3 ثواني', style: TextStyle(color: Colors.white)), onTap: () { setState(() { _selectedTimerSeconds = 3; _isTimerActive = true; }); Navigator.pop(context); }),
+            ListTile(title: const Text('5 ثواني', style: TextStyle(color: Colors.white)), onTap: () { setState(() { _selectedTimerSeconds = 5; _isTimerActive = true; }); Navigator.pop(context); }),
+            ListTile(title: const Text('10 ثواني', style: TextStyle(color: Colors.white)), onTap: () { setState(() { _selectedTimerSeconds = 10; _isTimerActive = true; }); Navigator.pop(context); }),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!isPermissionGranted) {
       return const Scaffold(body: Center(child: Text('Please grant camera permissions')));
     }
     if (controller == null || !controller!.value.isInitialized) {
-      return const Scaffold(backgroundColor: Colors.black, body: Center(child: CircularProgressIndicator(color: Colors.amber)));
+      return const Scaffold(backgroundColor: Colors.black, body: Center(child: CircularProgressIndicator(color: Colors.greenAccent)));
     }
 
     bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
@@ -316,224 +330,341 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       aspectRatio: _getAspectRatioValue(),
       child: Transform(
         alignment: Alignment.center,
-        transform: isFrontCamera ? Matrix4.rotationY(0) : Matrix4.identity(),
+        transform: isFrontCamera ? Matrix4.rotationY(3.14159) : Matrix4.identity(),
         child: CameraPreview(controller!),
       ),
     );
 
     return Scaffold(
       backgroundColor: Colors.black,
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          return Stack(
-            children: [
-              Positioned.fill(
-                child: GestureDetector(
-                  onScaleStart: (_) {
-                    setState(() { _showZoomWheel = true; _showExpandedPanel = false; });
-                  },
-                  onScaleUpdate: (details) async {
-                    double scaleFactor = details.scale > 1 ? 1.02 : 0.98;
-                    double newZoom = (_currentZoom * scaleFactor).clamp(_minZoom, _maxZoom);
-                    setState(() {
-                      _currentZoom = newZoom;
-                      _showZoomWheel = true;
-                      _lastZoomInteraction = DateTime.now();
-                    });
-                    await controller!.setZoomLevel(_currentZoom);
-                  },
-                  onScaleEnd: (_) {
-                    Future.delayed(const Duration(seconds: 2), () {
-                      if (mounted && DateTime.now().difference(_lastZoomInteraction).inSeconds >= 2) {
-                        setState(() { _showZoomWheel = false; });
-                      }
-                    });
-                  },
-                  child: Center(child: previewWidget),
-                ),
-              ),
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: GestureDetector(
+              onScaleStart: (_) => setState(() { _showZoomWheel = true; _showExpandedPanel = false; }),
+              onScaleUpdate: (details) async {
+                double scaleFactor = details.scale > 1 ? 1.02 : 0.98;
+                double newZoom = (_currentZoom * scaleFactor).clamp(_minZoom, _maxZoom);
+                setState(() { _currentZoom = newZoom; _showZoomWheel = true; _lastZoomInteraction = DateTime.now(); });
+                await controller!.setZoomLevel(_currentZoom);
+              },
+              child: Center(child: previewWidget),
+            ),
+          ),
 
-              if (_isProcessing)
-                Positioned(
-                  top: 130,
-                  left: 0,
-                  right: 0,
-                  child: Center(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: Colors.black87,
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: Colors.amber, width: 1),
-                      ),
-                      child: const Text(
-                        '✨ جاري معالجة وحِدة الـ AI للزوم...',
-                        style: TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ),
-                ),
+          if (_isGridActive)
+            Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: GridPainter()))),
 
-              if (_showZoomWheel)
-                Positioned(
-                  bottom: 235,
-                  left: 0,
-                  right: 0,
-                  child: Center(
-                    child: Container(
-                      height: 70,
-                      width: 270,
-                      decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.85),
-                        borderRadius: BorderRadius.circular(30),
-                        border: Border.all(color: Colors.amber.withOpacity(0.6), width: 1.2),
-                      ),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            '${_currentZoom.toStringAsFixed(1)}x',
-                            style: const TextStyle(color: Colors.amber, fontSize: 13, fontWeight: FontWeight.bold),
-                          ),
-                          Slider(
-                            value: _currentZoom,
-                            min: _minZoom,
-                            max: _maxZoom,
-                            activeColor: Colors.amber,
-                            inactiveColor: Colors.white24,
-                            onChanged: (val) async {
-                              setState(() {
-                                _currentZoom = val;
-                                _lastZoomInteraction = DateTime.now();
-                              });
-                              await controller!.setZoomLevel(_currentZoom);
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
+          if (_countdownSeconds > 0)
+            Positioned(
+              top: MediaQuery.of(context).size.height / 2 - 50, left: 0, right: 0,
+              child: Center(child: Text('$_countdownSeconds', style: const TextStyle(color: Colors.greenAccent, fontSize: 80, fontWeight: FontWeight.bold))),
+            ),
 
-              Positioned(
-                top: 50,
-                left: 20,
-                right: 20,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    IconButton(
-                      icon: Icon(_flashMode == FlashMode.torch ? Icons.flash_on : Icons.flash_off, color: Colors.amber),
-                      onPressed: () {
-                        setState(() {
-                          _flashMode = _flashMode == FlashMode.torch ? FlashMode.off : FlashMode.torch;
-                        });
-                        controller?.setFlashMode(_flashMode);
-                      },
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.settings, color: Colors.white),
-                      onPressed: () {
-                        Navigator.push(context, MaterialPageRoute(builder: (context) => const SettingsScreen()));
-                      },
-                    ),
-                  ],
-                ),
-              ),
-
-              Positioned(
-                bottom: 60,
-                left: 0,
-                right: 0,
+          if (_isWatermarkActive || _isLocationActive)
+            Positioned(
+              bottom: 140, left: 20,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(6)),
                 child: Column(
-                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    SizedBox(
-                      height: 30,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: ['VIDEO', 'PHOTO', 'PORTRAIT', 'NIGHT'].map((mode) {
-                          bool isSelected = _currentMode == mode;
-                          return Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 12.0),
-                            child: GestureDetector(
-                              onTap: () => setState(() {
-                                _currentMode = mode;
-                                if (mode != 'PORTRAIT') _showApertureSlider = false;
-                                _showExpandedPanel = false;
-                              }),
-                              child: Text(
-                                mode,
-                                style: TextStyle(
-                                  color: isSelected ? Colors.amber : Colors.white60,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 13,
-                                ),
-                              ),
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        GestureDetector(
-                          onTap: () {},
-                          child: Container(
-                            height: 48,
-                            width: 48,
-                            decoration: BoxDecoration(
-                              color: Colors.grey[900],
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: Colors.white30, width: 1.5),
-                            ),
-                            child: const Icon(Icons.photo, color: Colors.white, size: 24),
-                          ),
-                        ),
-                        GestureDetector(
-                          onTap: _captureAction,
-                          child: Container(
-                            height: 75,
-                            width: 75,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white, width: 3.5),
-                            ),
-                            child: Center(
-                              child: Container(
-                                height: 63,
-                                width: 63,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: _currentMode == 'VIDEO' && _isRecording ? Colors.red : Colors.white,
-                                ),
-                                child: _isRecording ? const Icon(Icons.stop, color: Colors.white, size: 30) : null,
-                              ),
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          iconSize: 30,
-                          icon: const Icon(Icons.cameraswitch_outlined, color: Colors.white),
-                          onPressed: _switchCamera,
-                        ),
-                      ],
-                    ),
+                    if (_isWatermarkActive) Text(_customWatermarkText, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                    if (_isLocationActive) const Text('📍 مصر، القاهرة', style: TextStyle(color: Colors.greenAccent, fontSize: 9)),
                   ],
                 ),
               ),
-            ],
-          );
-        },
+            ),
+
+          // مؤشر الزوم التفاعلي يظهر تلقائياً ويوضح التقريب الحالي (حتى أقصى زوم يدعمه الهاتف)
+          if (_showZoomWheel)
+            Positioned(
+              bottom: 220, left: 0, right: 0,
+              child: Center(
+                child: Container(
+                  height: 65, width: 260,
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.85),
+                    borderRadius: BorderRadius.circular(25),
+                    border: Border.all(color: Colors.greenAccent.withOpacity(0.6)),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text('زوم AI: ${_currentZoom.toStringAsFixed(1)}x (القصوى: ${_maxZoom.toStringAsFixed(0)}x)', style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                      Slider(
+                        value: _currentZoom,
+                        min: _minZoom,
+                        max: _maxZoom,
+                        activeColor: Colors.greenAccent,
+                        inactiveColor: Colors.white24,
+                        onChanged: (val) async {
+                          setState(() { _currentZoom = val; _lastZoomInteraction = DateTime.now(); });
+                          await controller!.setZoomLevel(_currentZoom);
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+          // شريط الأدوات العلوي
+          Positioned(
+            top: 45, left: 16, right: 16,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                IconButton(
+                  icon: Icon(_flashMode == FlashMode.torch ? Icons.flash_on : Icons.flash_off, color: Colors.white, size: 22),
+                  onPressed: () {
+                    setState(() { _flashMode = _flashMode == FlashMode.torch ? FlashMode.off : FlashMode.torch; });
+                    controller?.setFlashMode(_flashMode);
+                  },
+                ),
+                GestureDetector(
+                  onTap: () => setState(() { _showExpandedPanel = !_showExpandedPanel; }),
+                  child: Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+                    child: Icon(_showExpandedPanel ? Icons.expand_less : Icons.expand_more, color: Colors.greenAccent, size: 22),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.auto_awesome, color: Colors.white, size: 22),
+                  onPressed: () => setState(() { _isAiFocusEnabled = !_isAiFocusEnabled; }),
+                ),
+                IconButton(
+                  icon: Text(_selectedAspectRatio, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                  onPressed: () {
+                    setState(() {
+                      if (_selectedAspectRatio == '4:3') _selectedAspectRatio = '16:9';
+                      else if (_selectedAspectRatio == '16:9') _selectedAspectRatio = '1:1';
+                      else _selectedAspectRatio = '4:3';
+                    });
+                  },
+                ),
+              ],
+            ),
+          ),
+
+          // لوحة الخيارات المنسدلة
+          if (_showExpandedPanel)
+            Positioned(
+              top: 105, left: 20, right: 20,
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E1E1E).withOpacity(0.95),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.white24, width: 1),
+                ),
+                child: GridView.count(
+                  crossAxisCount: 4,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 12,
+                  children: [
+                    _buildMenuOption(icon: Icons.hdr_on, label: 'HDR', isActive: _isHdrActive, onTap: () => setState(() => _isHdrActive = !_isHdrActive)),
+                    _buildMenuOption(icon: Icons.timer_outlined, label: 'المؤقت', isActive: _isTimerActive, onTap: _showTimerDialog),
+                    _buildMenuOption(icon: Icons.branding_watermark_outlined, label: 'علامة مائية', isActive: _isWatermarkActive, onTap: _showWatermarkDialog),
+                    _buildMenuOption(icon: Icons.grid_on, label: 'الشبكة', isActive: _isGridActive, onTap: () => setState(() => _isGridActive = !_isGridActive)),
+                    _buildMenuOption(icon: Icons.center_focus_strong, label: 'تركيز AI', isActive: _isAiFocusEnabled, onTap: () => setState(() => _isAiFocusEnabled = !_isAiFocusEnabled)),
+                    _buildMenuOption(icon: Icons.location_on, label: 'الموقع', isActive: _isLocationActive, onTap: () => setState(() => _isLocationActive = !_isLocationActive)),
+                    _buildMenuOption(icon: Icons.settings_outlined, label: 'الإعدادات', isActive: false, onTap: () {
+                      Navigator.push(context, MaterialPageRoute(builder: (context) => SettingsScreen(
+                        shutterSound: _shutterSound,
+                        cloneShutterButton: _cloneShutterButton,
+                        horizonLevel: _horizonLevel,
+                        dirtyLensNotice: _dirtyLensNotice,
+                        portraitFps: _portraitFps,
+                        qrScannerActive: _qrScannerActive,
+                        onUpdate: (sound, clone, horizon, lens, fps, qr) {
+                          setState(() {
+                            _shutterSound = sound;
+                            _cloneShutterButton = clone;
+                            _horizonLevel = horizon;
+                            _dirtyLensNotice = lens;
+                            _portraitFps = fps;
+                            _qrScannerActive = qr;
+                          });
+                        },
+                        onReset: () {
+                          setState(() {
+                            _isHdrActive = true;
+                            _isTimerActive = false;
+                            _isWatermarkActive = false;
+                            _isGridActive = false;
+                            _isAiFocusEnabled = true;
+                            _isLocationActive = false;
+                            _shutterSound = true;
+                            _cloneShutterButton = false;
+                            _horizonLevel = false;
+                            _dirtyLensNotice = true;
+                            _portraitFps = 'تلقائي';
+                            _qrScannerActive = true;
+                          });
+                        },
+                      )));
+                    }),
+                  ],
+                ),
+              ),
+            ),
+
+          if (_isProcessing)
+            const Positioned(
+              top: 120, left: 0, right: 0,
+              child: Center(
+                child: Chip(
+                  backgroundColor: Colors.black87,
+                  label: Text('✨ جاري معالجة الزوم الفائق وتحسين تفاصيل AI...', style: TextStyle(color: Colors.greenAccent, fontSize: 12)),
+                ),
+              ),
+            ),
+
+          // الأزرار السفلية وأوضاع التصوير
+          Positioned(
+            bottom: 40, left: 0, right: 0,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  height: 30,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: ['VIDEO', 'PHOTO', 'PORTRAIT', 'NIGHT'].map((mode) {
+                      bool isSelected = _currentMode == mode;
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                        child: GestureDetector(
+                          onTap: () => setState(() => _currentMode = mode),
+                          child: Text(mode, style: TextStyle(color: isSelected ? Colors.greenAccent : Colors.white60, fontWeight: FontWeight.bold, fontSize: 13)),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+                const SizedBox(height: 15),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    Container(
+                      height: 45, width: 45,
+                      decoration: BoxDecoration(color: Colors.grey[900], borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.white30)),
+                      child: const Icon(Icons.photo, color: Colors.white, size: 22),
+                    ),
+                    GestureDetector(
+                      onTap: _captureAction,
+                      child: Container(
+                        height: 72, width: 72,
+                        decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 3)),
+                        child: Center(
+                          child: Container(
+                            height: 60, width: 60,
+                            decoration: BoxDecoration(shape: BoxShape.circle, color: _currentMode == 'VIDEO' && _isRecording ? Colors.red : Colors.white),
+                            child: _isRecording ? const Icon(Icons.stop, color: Colors.white, size: 28) : null,
+                          ),
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      iconSize: 28,
+                      icon: const Icon(Icons.cameraswitch_outlined, color: Colors.white),
+                      onPressed: _switchCamera,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMenuOption({required IconData icon, required String label, required bool isActive, required VoidCallback onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, color: isActive ? Colors.greenAccent : Colors.white70, size: 22),
+          const SizedBox(height: 4),
+          Text(label, style: TextStyle(color: isActive ? Colors.greenAccent : Colors.white70, fontSize: 10)),
+        ],
       ),
     );
   }
 }
 
-class SettingsScreen extends StatelessWidget {
-  const SettingsScreen({super.key});
+class GridPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = Colors.white24..strokeWidth = 1.0;
+    double thirdW = size.width / 3;
+    double thirdH = size.height / 3;
+
+    canvas.drawLine(Offset(thirdW, 0), Offset(thirdW, size.height), paint);
+    canvas.drawLine(Offset(thirdW * 2, 0), Offset(thirdW * 2, size.height), paint);
+    canvas.drawLine(Offset(0, thirdH), Offset(size.width, thirdH), paint);
+    canvas.drawLine(Offset(0, thirdH * 2), Offset(size.width, thirdH * 2), paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class SettingsScreen extends StatefulWidget {
+  final bool shutterSound;
+  final bool cloneShutterButton;
+  final bool horizonLevel;
+  final bool dirtyLensNotice;
+  final String portraitFps;
+  final bool qrScannerActive;
+  final Function(bool, bool, bool, bool, String, bool) onUpdate;
+  final VoidCallback onReset;
+
+  const SettingsScreen({
+    super.key,
+    required this.shutterSound,
+    required this.cloneShutterButton,
+    required this.horizonLevel,
+    required this.dirtyLensNotice,
+    required this.portraitFps,
+    required this.qrScannerActive,
+    required this.onUpdate,
+    required this.onReset,
+  });
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  late bool _sound;
+  late bool _clone;
+  late bool _horizon;
+  late bool _lens;
+  late String _fps;
+  late bool _qr;
+
+  @override
+  void initState() {
+    super.initState();
+    _sound = widget.shutterSound;
+    _clone = widget.cloneShutterButton;
+    _horizon = widget.horizonLevel;
+    _lens = widget.dirtyLensNotice;
+    _fps = widget.portraitFps;
+    _qr = widget.qrScannerActive;
+  }
+
+  void _updateParent() {
+    widget.onUpdate(_sound, _clone, _horizon, _lens, _fps, _qr);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -541,22 +672,53 @@ class SettingsScreen extends StatelessWidget {
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,
-        title: const Text('Settings'),
+        title: const Text('الإعدادات', style: TextStyle(color: Colors.white)),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_forward, color: Colors.greenAccent),
+          onPressed: () => Navigator.pop(context),
+        ),
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
-        children: const [
+        children: [
+          SwitchListTile(title: const Text('صوت الالتقاط'), value: _sound, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _sound = val); _updateParent(); }),
+          SwitchListTile(title: const Text('استنساخ زر الالتقاط'), value: _clone, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _clone = val); _updateParent(); }),
+          SwitchListTile(title: const Text('الموقع'), value: true, activeColor: Colors.greenAccent, onChanged: (_) {}),
+          SwitchListTile(title: const Text('المستوى الأفقي'), value: _horizon, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _horizon = val); _updateParent(); }),
+          ListTile(title: const Text('طرق التصوير والإعدادات الإضافية'), trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54), onTap: () {}),
           ListTile(
-            title: Text('Shutter Sound'),
-            trailing: Icon(Icons.arrow_forward_ios, size: 14),
+            title: const Text('محسن بورتريه AI'),
+            subtitle: Text(_fps, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
+            trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54),
+            onTap: () {
+              showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                  backgroundColor: Colors.grey[900],
+                  title: const Text('اختر جودة البورتريه', style: TextStyle(color: Colors.white)),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ListTile(title: const Text('تلقائي', style: TextStyle(color: Colors.white)), onTap: () { setState(() => _fps = 'تلقائي'); _updateParent(); Navigator.pop(context); }),
+                      ListTile(title: const Text('50 فريم', style: TextStyle(color: Colors.white)), onTap: () { setState(() => _fps = '50 فريم'); _updateParent(); Navigator.pop(context); }),
+                      ListTile(title: const Text('60 فريم', style: TextStyle(color: Colors.white)), onTap: () { setState(() => _fps = '60 فريم'); _updateParent(); Navigator.pop(context); }),
+                    ],
+                  ),
+                ),
+              );
+            },
           ),
+          SwitchListTile(title: const Text('مسح رموز QR'), value: _qr, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _qr = val); _updateParent(); }),
+          SwitchListTile(title: const Text('الإشعار بالعدسات المتسخة'), value: _lens, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _lens = val); _updateParent(); }),
+          const Divider(color: Colors.white24),
           ListTile(
-            title: Text('Location Watermark'),
-            trailing: Icon(Icons.arrow_forward_ios, size: 14),
-          ),
-          ListTile(
-            title: Text('Grid Lines'),
-            trailing: Icon(Icons.arrow_forward_ios, size: 14),
+            leading: const Icon(Icons.refresh, color: Colors.redAccent),
+            title: const Text('استعادة الإعدادات الافتراضية', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+            onTap: () {
+              widget.onReset();
+              setState(() { _sound = true; _clone = false; _horizon = false; _lens = true; _fps = 'تلقائي'; _qr = true; });
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تمت استعادة الإعدادات الافتراضية بنجاح')));
+            },
           ),
         ],
       ),
