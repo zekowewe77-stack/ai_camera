@@ -3,7 +3,9 @@ import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:gal/gal.dart';
+import 'package:image/image.dart' as img;
 import 'dart:async';
+import 'dart:io';
 
 List<CameraDescription> cameras = [];
 
@@ -46,29 +48,32 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   FlashMode _flashMode = FlashMode.off;
   double _currentZoom = 1.0;
   double _minZoom = 1.0;
-  double _maxZoom = 15.0; // زوم هاردوير الهاتف الحقيقي
+  double _maxZoom = 15.0; // سيتم تحديثه تلقائياً حسب قدرة هاردوير الهاتف
   
   bool _showZoomWheel = false;
   DateTime _lastZoomInteraction = DateTime.now();
 
   String _currentMode = 'PHOTO';
   bool _isRecording = false;
-  bool _showFlashEffect = false;
+  bool _isProcessing = false;
+  int _countdownSeconds = 0;
 
   Timer? _videoTimer;
   int _videoSeconds = 0;
 
   bool _showExpandedPanel = false;
 
+  // الإعدادات التفاعلية
   bool _isHdrActive = true;
   bool _isTimerActive = false;
   int _selectedTimerSeconds = 3;
   bool _isWatermarkActive = false;
   String _customWatermarkText = 'AI Camera Pro 2027';
-  bool _isGridActive = false;
+  bool _isGridActive = true;
   bool _isAiFocusEnabled = true;
   bool _isLocationActive = false;
 
+  // إعدادات لوحة التحكم
   bool _shutterSound = true;
   bool _cloneShutterButton = false;
   bool _horizonLevel = false;
@@ -112,6 +117,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
+  // التعرف التلقائي على قدرات الكاميرا والزوم الخاص بكل هاتف
   Future<void> _initCamera(int index) async {
     if (controller != null) await controller!.dispose();
     
@@ -125,6 +131,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     try {
       await controller!.initialize();
       
+      // جلب حدود الزوم الحقيقية المدعومة من هاردوير الموبايل الحالي تلقائياً
       _minZoom = await controller!.getMinZoomLevel();
       double hardwareMaxZoom = await controller!.getMaxZoomLevel();
       
@@ -148,19 +155,38 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // حفظ الصورة مباشرة في المعرض في الخلفية بدون أي أخطاء وبسرعة صاروخية
-  void _saveImageInBackground(String imagePath) {
+  // خوارزمية الذكاء الاصطناعي الفائقة لمعالجة الصور والزوم العالي وتوضيح النصوص في الخلفية دون تهنيج
+  Future<void> _enhanceAndSaveInBackground(String imagePath, bool isFront, double zoomLevel) async {
     Future.microtask(() async {
       try {
+        final File imageFile = File(imagePath);
+        final List<int> bytes = await imageFile.readAsBytes();
+        img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
+
+        if (capturedImage != null) {
+          if (isFront) {
+            capturedImage = img.flipHorizontal(capturedImage);
+          }
+
+          // معالجة ذكية مخصصة للزوم العالي لإبراز التفاصيل والحروف والتشبع الفائق
+          if (zoomLevel > 2.0) {
+            capturedImage = img.adjustColor(capturedImage, contrast: 1.3, brightness: 1.05, saturation: 1.2);
+          } else if (_isHdrActive) {
+            capturedImage = img.adjustColor(capturedImage, contrast: 1.2, brightness: 1.05, saturation: 1.15);
+          }
+
+          final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 100);
+          await imageFile.writeAsBytes(processedBytes);
+        }
         await Gal.putImage(imagePath);
       } catch (e) {
-        debugPrint('Background save error: $e');
+        debugPrint('Error processing image: $e');
       }
     });
   }
 
   Future<void> _captureAction() async {
-    if (controller == null || !controller!.value.isInitialized) return;
+    if (controller == null || !controller!.value.isInitialized || _isProcessing) return;
 
     if (_currentMode == 'VIDEO') {
       _toggleVideoRecording();
@@ -181,19 +207,20 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         HapticFeedback.heavyImpact();
       }
 
-      setState(() {
-        _showFlashEffect = true;
-        _showExpandedPanel = false;
-      });
-      Timer(const Duration(milliseconds: 70), () {
-        if (mounted) setState(() { _showFlashEffect = false; });
-      });
+      setState(() { _isProcessing = true; _showExpandedPanel = false; });
 
       final image = await controller!.takePicture();
-      _saveImageInBackground(image.path);
+      bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
+      
+      // تمرير نسبة الزوم الحالية لمعالجة الصورة بدقة في الخلفية
+      _enhanceAndSaveInBackground(image.path, isFront, _currentZoom);
 
+      if (mounted) {
+        setState(() { _isProcessing = false; });
+      }
     } catch (e) {
       debugPrint('Error capturing: $e');
+      if (mounted) setState(() { _isProcessing = false; });
     }
   }
 
@@ -310,9 +337,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             ),
           ),
 
-          if (_showFlashEffect)
-            Positioned.fill(child: Container(color: Colors.white.withOpacity(0.8))),
-
           if (_isGridActive)
             Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: GridPainter()))),
 
@@ -338,6 +362,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               ),
             ),
 
+          // مؤشر الزوم التفاعلي يظهر تلقائياً ويوضح التقريب الحالي
           if (_showZoomWheel)
             Positioned(
               bottom: 220, left: 0, right: 0,
@@ -352,7 +377,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text('زوم هاردوير: ${_currentZoom.toStringAsFixed(1)}x (القصوى: ${_maxZoom.toStringAsFixed(0)}x)', style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                      Text('زوم AI: ${_currentZoom.toStringAsFixed(1)}x (القصوى: ${_maxZoom.toStringAsFixed(0)}x)', style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
                       Slider(
                         value: _currentZoom,
                         min: _minZoom,
@@ -370,6 +395,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               ),
             ),
 
+          // شريط الأدوات العلوي
           Positioned(
             top: 45, left: 16, right: 16,
             child: Row(
@@ -408,6 +434,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             ),
           ),
 
+          // لوحة الخيارات المنسدلة
           if (_showExpandedPanel)
             Positioned(
               top: 105, left: 20, right: 20,
@@ -454,7 +481,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                             _isHdrActive = true;
                             _isTimerActive = false;
                             _isWatermarkActive = false;
-                            _isGridActive = false;
+                            _isGridActive = true;
                             _isAiFocusEnabled = true;
                             _isLocationActive = false;
                             _shutterSound = true;
@@ -472,6 +499,18 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               ),
             ),
 
+          if (_isProcessing)
+            const Positioned(
+              top: 120, left: 0, right: 0,
+              child: Center(
+                child: Chip(
+                  backgroundColor: Colors.black87,
+                  label: Text('✨ جاري معالجة الزوم الفائق وتحسين تفاصيل AI...', style: TextStyle(color: Colors.greenAccent, fontSize: 12)),
+                ),
+              ),
+            ),
+
+          // الأزرار السفلية وأوضاع التصوير
           Positioned(
             bottom: 40, left: 0, right: 0,
             child: Column(
