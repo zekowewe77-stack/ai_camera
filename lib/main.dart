@@ -56,7 +56,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   String _currentMode = 'PHOTO';
   bool _isRecording = false;
   int _countdownSeconds = 0;
-  bool _showFlashEffect = false; // تأثير ومضة الالتقاط السريعة
+  bool _showFlashEffect = false;
 
   Timer? _videoTimer;
   int _videoSeconds = 0;
@@ -148,34 +148,31 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // معالجة فائقة في الخلفية بدون أي تعليق للتليفون وإبراز الألوان والكتابة بدقة 4K
-  void _processAndSaveInBackground(String imagePath, bool isFront, double zoomLevel) {
-    Future.microtask(() async {
-      try {
-        final File imageFile = File(imagePath);
-        final List<int> bytes = await imageFile.readAsBytes();
-        img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
+  Future<void> _processImageAndSave(String imagePath, bool isFront, double zoomLevel) async {
+    try {
+      final File imageFile = File(imagePath);
+      final List<int> bytes = await imageFile.readAsBytes();
+      img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
 
-        if (capturedImage != null) {
-          if (isFront) {
-            capturedImage = img.flipHorizontal(capturedImage);
-          }
-
-          // تحسين الألوان، التشبع، وإبراز تفاصيل الكتابة بذكاء سواء للصور القريبة أو البعيدة
-          if (zoomLevel > 1.5) {
-            capturedImage = img.adjustColor(capturedImage, contrast: 1.25, brightness: 1.03, saturation: 1.15);
-          } else {
-            capturedImage = img.adjustColor(capturedImage, contrast: 1.15, brightness: 1.02, saturation: 1.1);
-          }
-
-          final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 100);
-          await imageFile.writeAsBytes(processedBytes);
+      if (capturedImage != null) {
+        if (isFront) {
+          capturedImage = img.flipHorizontal(capturedImage);
         }
-        await Gal.putImage(imagePath);
-      } catch (e) {
-        debugPrint('Background processing error: $e');
+
+        if (zoomLevel > 1.5) {
+          capturedImage = img.adjustColor(capturedImage, contrast: 1.2, brightness: 1.02, saturation: 1.12);
+        } else if (_isHdrActive) {
+          capturedImage = img.adjustColor(capturedImage, contrast: 1.12, brightness: 1.02, saturation: 1.08);
+        }
+
+        final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 100);
+        await imageFile.writeAsBytes(processedBytes);
       }
-    });
+      await Gal.putImage(imagePath);
+    } catch (e) {
+      debugPrint('Processing error: $e');
+      await Gal.putImage(imagePath);
+    }
   }
 
   Future<void> _captureAction() async {
@@ -200,20 +197,19 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         HapticFeedback.heavyImpact();
       }
 
-      // إظهار ومضة بيضاء سريعة لتعلم المستخدم أن الصورة لقطت في الحال بدون أي تجميد
       setState(() {
         _showFlashEffect = true;
         _showExpandedPanel = false;
       });
-      Timer(const Duration(milliseconds: 100), () {
+      
+      Timer(const Duration(milliseconds: 80), () {
         if (mounted) setState(() { _showFlashEffect = false; });
       });
 
-      // التقاط فوري وتسليم المعالجة للخلفية تماماً
       final image = await controller!.takePicture();
       bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
       
-      _processAndSaveInBackground(image.path, isFront, _currentZoom);
+      _processImageAndSave(image.path, isFront, _currentZoom);
 
     } catch (e) {
       debugPrint('Error capturing: $e');
@@ -249,7 +245,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   void dispose() {
     _videoTimer?.cancel();
-    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.removeObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
@@ -327,9 +323,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             ),
           ),
 
-          // تأثير الوميض الأبيض السريع عند الالتقاط
           if (_showFlashEffect)
-            Positioned.fill(child: Container(color: Colors.white.withOpacity(0.7))),
+            Positioned.fill(child: Container(color: Colors.white.withOpacity(0.8))),
 
           if (_isGridActive)
             Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: GridPainter()))),
@@ -633,7 +628,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SwitchListTile(title: const Text('استنساخ زر الالتقاط'), value: _clone, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _clone = val); _updateParent(); }),
           SwitchListTile(title: const Text('الموقع'), value: true, activeColor: Colors.greenAccent, onChanged: (_) {}),
           SwitchListTile(title: const Text('المستوى الأفقي'), value: _horizon, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _horizon = val); _updateParent(); }),
-          ListTile(title: const Text('طرق التصوير والإعدادات الإضافية'), trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54), onTap: {}),
+          ListTile(title: const Text('طرق التصوير والإعدادات الإضافية'), trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54), onTap: () {}),
           ListTile(
             title: const Text('محسن بورتريه AI'),
             subtitle: Text(_fps, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
