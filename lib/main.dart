@@ -150,7 +150,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // معالجة آمنة ومستقرة في الخلفية لمنع التهنيج وتحسين جودة الصور والزوم
   void _processAndSaveInBackground(String imagePath, bool isFront, double zoomLevel) {
     Future.microtask(() async {
       try {
@@ -163,10 +162,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             capturedImage = img.flipHorizontal(capturedImage);
           }
 
-          if (zoomLevel > 2.0) {
-            capturedImage = img.adjustColor(capturedImage, brightness: 1.0, contrast: 1.15, saturation: 1.05);
+          if (_flashMode == FlashMode.torch || _flashMode == FlashMode.always) {
+            capturedImage = img.adjustColor(capturedImage, brightness: 0.92, contrast: 1.1, saturation: 1.05);
+          } else if (zoomLevel > 2.0) {
+            capturedImage = img.adjustColor(capturedImage, brightness: 0.95, contrast: 1.25, saturation: 1.1);
           } else if (_isHdrActive) {
-            capturedImage = img.adjustColor(capturedImage, contrast: 1.1, brightness: 1.0, saturation: 1.02);
+            capturedImage = img.adjustColor(capturedImage, contrast: 1.15, brightness: 1.0, saturation: 1.05);
           }
 
           final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 95);
@@ -285,7 +286,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   void dispose() {
     _videoTimer?.cancel();
-    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.removeObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
