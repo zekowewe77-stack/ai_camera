@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:gal/gal.dart';
-import 'package:image/image.dart' as img;
 import 'dart:async';
 import 'dart:io';
 
@@ -48,7 +47,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   FlashMode _flashMode = FlashMode.off;
   double _currentZoom = 1.0;
   double _minZoom = 1.0;
-  double _maxZoom = 15.0; // سيتم تحديثه تلقائياً حسب قدرة هاردوير الهاتف
+  double _maxZoom = 15.0; // يتعرف تلقائياً على زوم الهاردوير الحقيقي للهاتف
   
   bool _showZoomWheel = false;
   DateTime _lastZoomInteraction = DateTime.now();
@@ -117,7 +116,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // التعرف التلقائي على قدرات الكاميرا والزوم الخاص بكل هاتف
+  // التعرف التلقائي على قدرات الكاميرا والزوم الحقيقي لكل هاتف
   Future<void> _initCamera(int index) async {
     if (controller != null) await controller!.dispose();
     
@@ -131,7 +130,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     try {
       await controller!.initialize();
       
-      // جلب حدود الزوم الحقيقية المدعومة من هاردوير الموبايل الحالي تلقائياً
       _minZoom = await controller!.getMinZoomLevel();
       double hardwareMaxZoom = await controller!.getMaxZoomLevel();
       
@@ -155,32 +153,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // خوارزمية الذكاء الاصطناعي الفائقة لمعالجة الصور والزوم العالي وتوضيح النصوص في الخلفية دون تهنيج
-  Future<void> _enhanceAndSaveInBackground(String imagePath, bool isFront, double zoomLevel) async {
+  // حفظ الصورة مباشرة في المعرض في الخلفية بصفر أخطاء وبسرعة فائقة
+  void _saveImageInBackground(String imagePath) {
     Future.microtask(() async {
       try {
-        final File imageFile = File(imagePath);
-        final List<int> bytes = await imageFile.readAsBytes();
-        img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
-
-        if (capturedImage != null) {
-          if (isFront) {
-            capturedImage = img.flipHorizontal(capturedImage);
-          }
-
-          // معالجة ذكية مخصصة للزوم العالي لإبراز التفاصيل والحروف والتشبع الفائق
-          if (zoomLevel > 2.0) {
-            capturedImage = img.adjustColor(capturedImage, contrast: 1.3, brightness: 1.05, saturation: 1.2);
-          } else if (_isHdrActive) {
-            capturedImage = img.adjustColor(capturedImage, contrast: 1.2, brightness: 1.05, saturation: 1.15);
-          }
-
-          final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 100);
-          await imageFile.writeAsBytes(processedBytes);
-        }
         await Gal.putImage(imagePath);
       } catch (e) {
-        debugPrint('Error processing image: $e');
+        debugPrint('Background save error: $e');
       }
     });
   }
@@ -210,13 +189,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       setState(() { _isProcessing = true; _showExpandedPanel = false; });
 
       final image = await controller!.takePicture();
-      bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
-      
-      // تمرير نسبة الزوم الحالية لمعالجة الصورة بدقة في الخلفية
-      _enhanceAndSaveInBackground(image.path, isFront, _currentZoom);
+      _saveImageInBackground(image.path);
 
       if (mounted) {
         setState(() { _isProcessing = false; });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('✨ تم التقاط الصورة بنجاح!'), duration: Duration(milliseconds: 500)),
+        );
       }
     } catch (e) {
       debugPrint('Error capturing: $e');
@@ -362,7 +341,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               ),
             ),
 
-          // مؤشر الزوم التفاعلي يظهر تلقائياً ويوضح التقريب الحالي
+          // مؤشر الزوم التفاعلي
           if (_showZoomWheel)
             Positioned(
               bottom: 220, left: 0, right: 0,
@@ -377,7 +356,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text('زوم AI: ${_currentZoom.toStringAsFixed(1)}x (القصوى: ${_maxZoom.toStringAsFixed(0)}x)', style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                      Text('زوم هاردوير: ${_currentZoom.toStringAsFixed(1)}x (القصوى: ${_maxZoom.toStringAsFixed(0)}x)', style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
                       Slider(
                         value: _currentZoom,
                         min: _minZoom,
@@ -495,17 +474,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                       )));
                     }),
                   ],
-                ),
-              ),
-            ),
-
-          if (_isProcessing)
-            const Positioned(
-              top: 120, left: 0, right: 0,
-              child: Center(
-                child: Chip(
-                  backgroundColor: Colors.black87,
-                  label: Text('✨ جاري معالجة الزوم الفائق وتحسين تفاصيل AI...', style: TextStyle(color: Colors.greenAccent, fontSize: 12)),
                 ),
               ),
             ),
