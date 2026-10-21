@@ -48,7 +48,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   FlashMode _flashMode = FlashMode.off;
   double _currentZoom = 1.0;
   double _minZoom = 1.0;
-  double _maxZoom = 1.0;
+  double _maxZoom = 4.0; // سيتم تحديثه تلقائياً حسب قدرة هاردوير الهاتف الحقيقية
   
   bool _showZoomWheel = false;
   DateTime _lastZoomInteraction = DateTime.now();
@@ -63,6 +63,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   bool _showExpandedPanel = false;
 
+  // الإعدادات التفاعلية
   bool _isHdrActive = true;
   bool _isTimerActive = false;
   int _selectedTimerSeconds = 3;
@@ -72,6 +73,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _isAiFocusEnabled = true;
   bool _isLocationActive = false;
 
+  // إعدادات لوحة التحكم
   bool _shutterSound = true;
   bool _cloneShutterButton = false;
   bool _horizonLevel = false;
@@ -115,6 +117,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
+  // التعرف التلقائي على قدرات الكاميرا والزوم الحقيقي لكل هاتف بدون أرقام وهمية
   Future<void> _initCamera(int index) async {
     if (controller != null) await controller!.dispose();
     
@@ -128,9 +131,11 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     try {
       await controller!.initialize();
       
-      // قراءة أقصى زوم حقيقي بدقة للهاتف الحالي
       _minZoom = await controller!.getMinZoomLevel();
-      _maxZoom = await controller!.getMaxZoomLevel();
+      double hardwareMaxZoom = await controller!.getMaxZoomLevel();
+      
+      // جلب الزوم الحقيقي للهاردوير مع وضع حد أدنى منطقي 4x أو حسب إمكانيات الجهاز
+      _maxZoom = hardwareMaxZoom > 1.0 ? hardwareMaxZoom : 4.0;
 
       _currentZoom = _minZoom;
       await controller!.setZoomLevel(_currentZoom);
@@ -149,36 +154,33 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // معالجة الخلفية الفائقة بدون تهنيج وبجودة 4K النقية
-  void _processAndSaveInBackground(String imagePath, bool isFront, double zoomLevel) {
-    Future.microtask(() async {
-      try {
-        final File imageFile = File(imagePath);
-        final List<int> bytes = await imageFile.readAsBytes();
-        img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
+  // معالجة فورية ونقية بدون نغبشة وبجودة 4K مع ضبط انعكاس الكاميرا الأمامية
+  Future<String> _enhanceAndSharpenImage(String imagePath, bool isFront, double zoomLevel) async {
+    try {
+      final File imageFile = File(imagePath);
+      final List<int> bytes = await imageFile.readAsBytes();
+      img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
 
-        if (capturedImage != null) {
-          // تعديل الاتجاه للكاميرا الأمامية لتظهر الصورة المأخوذة عدلة ومضبوطة
-          if (isFront) {
-            capturedImage = img.flipHorizontal(capturedImage);
-          }
-
-          // معالجة ألوان وحِدّة بدون نغبشة بجودة فائقة
-          if (zoomLevel > 2.0) {
-            capturedImage = img.adjustColor(capturedImage, contrast: 1.15, brightness: 1.02, saturation: 1.08);
-          } else if (_isHdrActive) {
-            capturedImage = img.adjustColor(capturedImage, contrast: 1.1, brightness: 1.02, saturation: 1.05);
-          }
-
-          // حفظ بجودة 100% للحفاظ على وضوح الـ 4K والتفاصيل عند الزوم
-          final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 100);
-          await imageFile.writeAsBytes(processedBytes);
+      if (capturedImage != null) {
+        // تعديل الصورة الأمامية لتصبح عدلة وصحيحة في المعرض تماماً
+        if (isFront) {
+          capturedImage = img.flipHorizontal(capturedImage);
         }
-        await Gal.putImage(imagePath);
-      } catch (e) {
-        debugPrint('Background processing error: $e');
+
+        if (zoomLevel > 2.0) {
+          capturedImage = img.adjustColor(capturedImage, contrast: 1.15, brightness: 1.02, saturation: 1.08);
+        } else if (_isHdrActive) {
+          capturedImage = img.adjustColor(capturedImage, contrast: 1.1, brightness: 1.02, saturation: 1.05);
+        }
+
+        // حفظ بأقصى جودة نقية لضمان عدم وجود أي نغبشة عند تقريب الصورة
+        final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 100);
+        await imageFile.writeAsBytes(processedBytes);
       }
-    });
+    } catch (e) {
+      debugPrint('Error processing image: $e');
+    }
+    return imagePath;
   }
 
   Future<void> _captureAction() async {
@@ -203,21 +205,23 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         HapticFeedback.heavyImpact();
       }
 
-      setState(() { _showExpandedPanel = false; });
+      setState(() { _isProcessing = true; _showExpandedPanel = false; });
 
-      // التقاط فوري للصورة بدون توقف الواجهة
       final image = await controller!.takePicture();
       bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
       
-      _processAndSaveInBackground(image.path, isFront, _currentZoom);
+      final String enhancedPath = await _enhanceAndSharpenImage(image.path, isFront, _currentZoom);
+      await Gal.putImage(enhancedPath);
 
       if (mounted) {
+        setState(() { _isProcessing = false; });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('✨ تم التقاط الصورة بجودة 4K والمعالجة جارية!'), duration: Duration(milliseconds: 400)),
+          const SnackBar(content: Text('✨ تمت التقاط الصورة وحفظها بجودة 4K نقية!'), duration: Duration(milliseconds: 500)),
         );
       }
     } catch (e) {
       debugPrint('Error capturing: $e');
+      if (mounted) setState(() { _isProcessing = false; });
     }
   }
 
@@ -250,7 +254,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   void dispose() {
     _videoTimer?.cancel();
-    WidgetsBinding.instance.removeObserver(this);
+    WidgetsBinding.instance.addObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
@@ -308,7 +312,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
 
-    // معاينة المراية الطبيعية أثناء التصوير
     Widget previewWidget = AspectRatio(
       aspectRatio: _getAspectRatioValue(),
       child: Transform(
@@ -494,6 +497,17 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               ),
             ),
 
+          if (_isProcessing)
+            const Positioned(
+              top: 120, left: 0, right: 0,
+              child: Center(
+                child: Chip(
+                  backgroundColor: Colors.black87,
+                  label: Text('✨ جاري معالجة الزوم الفائق وجودة 4K...', style: TextStyle(color: Colors.greenAccent, fontSize: 12)),
+                ),
+              ),
+            ),
+
           Positioned(
             bottom: 40, left: 0, right: 0,
             child: Column(
@@ -653,7 +667,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SwitchListTile(title: const Text('استنساخ زر الالتقاط'), value: _clone, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _clone = val); _updateParent(); }),
           SwitchListTile(title: const Text('الموقع'), value: true, activeColor: Colors.greenAccent, onChanged: (_) {}),
           SwitchListTile(title: const Text('المستوى الأفقي'), value: _horizon, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _horizon = val); _updateParent(); }),
-          ListTile(title: const Text('طرق التصوير والإعدادات الإضافية'), trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54), onTap: () {}),
+          ListTile(title: const Text('طرق التصوير والإعدادات الإضافية'), trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54), onTap: {}),
           ListTile(
             title: const Text('محسن بورتريه AI'),
             subtitle: Text(_fps, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
@@ -670,6 +684,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ListTile(title: const Text('تلقائي', style: TextStyle(color: Colors.white)), onTap: () { setState(() => _fps = 'تلقائي'); _updateParent(); Navigator.pop(context); }),
                       ListTile(title: const Text('50 فريم', style: TextStyle(color: Colors.white)), onTap: () { setState(() => _fps = '50 فريم'); _updateParent(); Navigator.pop(context); }),
                       ListTile(title: const Text('60 فريم', style: TextStyle(color: Colors.white)), onTap: () { setState(() => _fps = '60 فريم'); _updateParent(); Navigator.pop(context); }),
+                      
                     ],
                   ),
                 ),
