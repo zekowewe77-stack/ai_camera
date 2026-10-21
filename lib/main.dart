@@ -151,7 +151,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  Future<String> _enhanceAndSharpenImage(String imagePath, bool isFront, double zoomLevel) async {
+  Future<String> _safeProcessImage(String imagePath, bool isFront) async {
     try {
       final File imageFile = File(imagePath);
       final List<int> bytes = await imageFile.readAsBytes();
@@ -161,13 +161,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         if (isFront) {
           capturedImage = img.flipHorizontal(capturedImage);
         }
-
-        if (zoomLevel > 2.0) {
-          capturedImage = img.adjustColor(capturedImage, contrast: 1.3, brightness: 1.05, saturation: 1.15);
-        } else if (_isHdrActive) {
-          capturedImage = img.adjustColor(capturedImage, contrast: 1.2, brightness: 1.05, saturation: 1.1);
-        }
-
         final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 100);
         await imageFile.writeAsBytes(processedBytes);
       }
@@ -204,13 +197,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       final image = await controller!.takePicture();
       bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
       
-      final String enhancedPath = await _enhanceAndSharpenImage(image.path, isFront, _currentZoom);
-      await Gal.putImage(enhancedPath);
+      final String processedPath = await _safeProcessImage(image.path, isFront);
+      await Gal.putImage(processedPath);
 
       if (mounted) {
         setState(() { _isProcessing = false; });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('✨ تمت المعالجة بنجاح!'), duration: Duration(milliseconds: 600)),
+          const SnackBar(content: Text('✨ تم التقاط الصورة بنجاح!'), duration: Duration(milliseconds: 600)),
         );
       }
     } catch (e) {
@@ -248,7 +241,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   void dispose() {
     _videoTimer?.cancel();
-    WidgetsBinding.instance.removeObserver(this);
+    WidgetsBinding.instance.addObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
@@ -365,7 +358,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text('زوم AI: ${_currentZoom.toStringAsFixed(1)}x (القصوى: ${_maxZoom.toStringAsFixed(0)}x)', style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                      Text('زوم هاردوير: ${_currentZoom.toStringAsFixed(1)}x (القصوى: ${_maxZoom.toStringAsFixed(0)}x)', style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
                       Slider(
                         value: _currentZoom,
                         min: _minZoom,
