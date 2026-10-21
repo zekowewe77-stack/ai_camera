@@ -48,7 +48,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   FlashMode _flashMode = FlashMode.off;
   double _currentZoom = 1.0;
   double _minZoom = 1.0;
-  double _maxZoom = 15.0; // سيتم تحديثه تلقائياً حسب قدرة هاردوير الهاتف
+  double _maxZoom = 15.0;
   
   bool _showZoomWheel = false;
   DateTime _lastZoomInteraction = DateTime.now();
@@ -63,7 +63,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   bool _showExpandedPanel = false;
 
-  // الإعدادات التفاعلية
   bool _isHdrActive = true;
   bool _isTimerActive = false;
   int _selectedTimerSeconds = 3;
@@ -73,7 +72,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _isAiFocusEnabled = true;
   bool _isLocationActive = false;
 
-  // إعدادات لوحة التحكم
   bool _shutterSound = true;
   bool _cloneShutterButton = false;
   bool _horizonLevel = false;
@@ -117,7 +115,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // التعرف التلقائي على قدرات الكاميرا والزوم الخاص بكل هاتف
   Future<void> _initCamera(int index) async {
     if (controller != null) await controller!.dispose();
     
@@ -131,7 +128,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     try {
       await controller!.initialize();
       
-      // جلب حدود الزوم الحقيقية المدعومة من هاردوير الموبايل الحالي تلقائياً
       _minZoom = await controller!.getMinZoomLevel();
       double hardwareMaxZoom = await controller!.getMaxZoomLevel();
       
@@ -155,7 +151,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // خوارزمية الذكاء الاصطناعي الفائقة لمعالجة الصور والزوم العالي وتوضيح النصوص وإزالة النغباشة
   Future<String> _enhanceAndSharpenImage(String imagePath, bool isFront, double zoomLevel) async {
     try {
       final File imageFile = File(imagePath);
@@ -167,26 +162,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
           capturedImage = img.flipHorizontal(capturedImage);
         }
 
-        // معالجة ذكية مخصصة للزوم العالي لإبراز التفاصيل والحروف وإزالة البكسلة
         if (zoomLevel > 2.0) {
-          capturedImage = img.adjustColor(capturedImage, contrast: 1.32, brightness: 1.05, saturation: 1.2);
+          capturedImage = img.adjustColor(capturedImage, contrast: 1.3, brightness: 1.05, saturation: 1.15);
         } else if (_isHdrActive) {
-          capturedImage = img.adjustColor(capturedImage, contrast: 1.22, brightness: 1.04, saturation: 1.12);
+          capturedImage = img.adjustColor(capturedImage, contrast: 1.2, brightness: 1.05, saturation: 1.1);
         }
 
-        // مرشح الحِدة الفائق (AI Super Sharpening) لإزالة التشويش وتوضيح الحواف والنصوص والأرقام
-        img.Image sharpenedImage = img.convolution(
-          capturedImage,
-          filter: [
-             0, -1,  0,
-            -1,  5, -1,
-             0, -1,  0
-          ],
-          div: 1,
-          offset: 0,
-        );
-
-        final List<int> processedBytes = img.encodeJpg(sharpenedImage, quality: 100);
+        final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 100);
         await imageFile.writeAsBytes(processedBytes);
       }
     } catch (e) {
@@ -222,14 +204,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       final image = await controller!.takePicture();
       bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
       
-      // تمرير نسبة الزوم الحالية لمعالجة الصورة بدقة بناءً على التقريب
       final String enhancedPath = await _enhanceAndSharpenImage(image.path, isFront, _currentZoom);
       await Gal.putImage(enhancedPath);
 
       if (mounted) {
         setState(() { _isProcessing = false; });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('✨ تمت المعالجة بالذكاء الاصطناعي بدقة فائقة!'), duration: Duration(milliseconds: 600)),
+          const SnackBar(content: Text('✨ تمت المعالجة بنجاح!'), duration: Duration(milliseconds: 600)),
         );
       }
     } catch (e) {
@@ -323,16 +304,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       return const Scaffold(backgroundColor: Colors.black, body: Center(child: CircularProgressIndicator(color: Colors.greenAccent)));
     }
 
-    bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
-
-    // إصلاح انعكاس الكاميرا الأمامية (Mirror Fix) في المعاينة لتطابق حركة المستخدم تماماً
     Widget previewWidget = AspectRatio(
       aspectRatio: _getAspectRatioValue(),
-      child: Transform(
-        alignment: Alignment.center,
-        transform: isFrontCamera ? Matrix4.identity() : Matrix4.identity(),
-        child: CameraPreview(controller!),
-      ),
+      child: CameraPreview(controller!),
     );
 
     return Scaffold(
@@ -377,7 +351,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               ),
             ),
 
-          // مؤشر الزوم التفاعلي
           if (_showZoomWheel)
             Positioned(
               bottom: 220, left: 0, right: 0,
@@ -410,7 +383,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               ),
             ),
 
-          // شريط الأدوات العلوي
           Positioned(
             top: 45, left: 16, right: 16,
             child: Row(
@@ -449,7 +421,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             ),
           ),
 
-          // لوحة الخيارات المنسدلة
           if (_showExpandedPanel)
             Positioned(
               top: 105, left: 20, right: 20,
@@ -514,18 +485,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               ),
             ),
 
-          if (_isProcessing)
-            const Positioned(
-              top: 120, left: 0, right: 0,
-              child: Center(
-                child: Chip(
-                  backgroundColor: Colors.black87,
-                  label: Text('✨ جاري معالجة الزوم الفائق وتوضيح النصوص...', style: TextStyle(color: Colors.greenAccent, fontSize: 12)),
-                ),
-              ),
-            ),
-
-          // الأزرار السفلية وأوضاع التصوير (مقتصرة على VIDEO و PHOTO فقط)
           Positioned(
             bottom: 40, left: 0, right: 0,
             child: Column(
