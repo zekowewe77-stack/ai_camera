@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:gal/gal.dart';
-import 'package:image/image.dart' as img;
+import 'package:photo_manager/photo_manager.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -53,7 +53,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _showZoomWheel = false;
   DateTime _lastZoomInteraction = DateTime.now();
 
-  String _currentMode = 'PHOTO';
+  String _currentMode = 'PHOTO'; // اقتصرت على VIDEO و PHOTO فقط
   bool _isRecording = false;
   int _countdownSeconds = 0;
   bool _showFlashEffect = false;
@@ -107,6 +107,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     await Permission.camera.request();
     await Permission.microphone.request();
     await Permission.storage.request();
+    await PhotoManager.requestPermissionExtend();
     await Gal.requestAccess();
 
     if (await Permission.camera.isGranted) {
@@ -148,31 +149,77 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  Future<void> _processImageAndSave(String imagePath, bool isFront, double zoomLevel) async {
+  // فتح معرض الصور الفعلي الخاص بالموبايل واستعراض أحدث الصور بداخل التطبيق
+  Future<void> _openDeviceGallery() async {
     try {
-      final File imageFile = File(imagePath);
-      final List<int> bytes = await imageFile.readAsBytes();
-      img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
-
-      if (capturedImage != null) {
-        if (isFront) {
-          capturedImage = img.flipHorizontal(capturedImage);
+      final List<AssetPathEntity> albums = await PhotoManager.getAssetPathList(type: RequestType.image);
+      if (albums.isNotEmpty) {
+        final AssetPathEntity recentAlbum = albums.first;
+        final List<AssetEntity> images = await recentAlbum.getAssetListRange(start: 0, end: 20);
+        if (images.isNotEmpty && mounted) {
+          showModalBottomSheet(
+            context: context,
+            backgroundColor: Colors.black87,
+            builder: (context) => Container(
+              height: 300,
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                children: [
+                  const Text('أحدث الصور في المعرض', style: TextStyle(color: Colors.greenAccent, fontSize: 14, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: GridView.builder(
+                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 4, mainAxisSpacing: 8, crossAxisSpacing: 8),
+                      itemCount: images.length,
+                      itemBuilder: (context, index) {
+                        return FutureBuilder<File?>(
+                          future: images[index].file,
+                          builder: (context, snapshot) {
+                            if (snapshot.connectionState == ConnectionState.done && snapshot.data != null) {
+                              return ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: Image.file(snapshot.data!, fit: BoxFit.cover),
+                              );
+                            }
+                            return Container(color: Colors.grey[800]);
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+          return;
         }
-
-        if (zoomLevel > 1.5) {
-          capturedImage = img.adjustColor(capturedImage, contrast: 1.2, brightness: 1.02, saturation: 1.12);
-        } else if (_isHdrActive) {
-          capturedImage = img.adjustColor(capturedImage, contrast: 1.12, brightness: 1.02, saturation: 1.08);
-        }
-
-        final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 100);
-        await imageFile.writeAsBytes(processedBytes);
       }
-      await Gal.putImage(imagePath);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(constSnackBar(content: Text('لا توجد صور في المعرض')));
+      }
     } catch (e) {
-      debugPrint('Processing error: $e');
-      await Gal.putImage(imagePath);
+      debugPrint('Error opening gallery: $e');
     }
+  }
+
+  // معالجة فورية في الخلفية الحقيقية بدون أي تأثير على سرعة الكاميرا أو تهنيج التليفون
+  void _saveImageInBackground(String imagePath, bool isFront) {
+    Future.microtask(() async {
+      try {
+        if (isFront) {
+          final File imageFile = File(imagePath);
+          final List<int> bytes = await imageFile.readAsBytes();
+          img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
+          if (capturedImage != null) {
+            capturedImage = img.flipHorizontal(capturedImage);
+            await imageFile.writeAsBytes(img.encodeJpg(capturedImage, quality: 100));
+          }
+        }
+        await Gal.putImage(imagePath);
+      } catch (e) {
+        debugPrint('Background save error: $e');
+      }
+    });
   }
 
   Future<void> _captureAction() async {
@@ -197,19 +244,20 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         HapticFeedback.heavyImpact();
       }
 
+      // إعطاء مؤشر بصري فوري (وميض أبيض) لتعلم المستخدم أن الصورة لقطت في الحال بدون أي تجميد
       setState(() {
         _showFlashEffect = true;
         _showExpandedPanel = false;
       });
-      
-      Timer(const Duration(milliseconds: 80), () {
+      Timer(const Duration(milliseconds: 60), () {
         if (mounted) setState(() { _showFlashEffect = false; });
       });
 
+      // التقاط الصورة وحفظها في الخلفية فوراً بدون إيقاف الشاشة أو تهنيج الكاميرا
       final image = await controller!.takePicture();
       bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
       
-      _processImageAndSave(image.path, isFront, _currentZoom);
+      _saveImageInBackground(image.path, isFront);
 
     } catch (e) {
       debugPrint('Error capturing: $e');
@@ -245,7 +293,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   void dispose() {
     _videoTimer?.cancel();
-    WidgetsBinding.instance.removeObserver(this);
+    WidgetsBinding.instance.addObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
@@ -478,13 +526,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   height: 30,
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
-                    children: ['VIDEO', 'PHOTO', 'PORTRAIT', 'NIGHT'].map((mode) {
+                    children: ['PHOTO', 'VIDEO'].map((mode) { // اقتصرت على فيديو وتصوير فقط حسب طلبك
                       bool isSelected = _currentMode == mode;
                       return Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                        padding: const EdgeInsets.symmetric(horizontal: 16.0),
                         child: GestureDetector(
                           onTap: () => setState(() => _currentMode = mode),
-                          child: Text(mode, style: TextStyle(color: isSelected ? Colors.greenAccent : Colors.white60, fontWeight: FontWeight.bold, fontSize: 13)),
+                          child: Text(mode == 'PHOTO' ? 'تصوير' : 'فيديو', style: TextStyle(color: isSelected ? Colors.greenAccent : Colors.white60, fontWeight: FontWeight.bold, fontSize: 13)),
                         ),
                       );
                     }).toList(),
@@ -494,10 +542,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    Container(
-                      height: 45, width: 45,
-                      decoration: BoxDecoration(color: Colors.grey[900], borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.white30)),
-                      child: const Icon(Icons.photo, color: Colors.white, size: 22),
+                    GestureDetector(
+                      onTap: _openDeviceGallery, // تم ربط زر المعرض بالمعرض الحقيقي للموبايل
+                      child: Container(
+                        height: 45, width: 45,
+                        decoration: BoxDecoration(color: Colors.grey[900], borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.white30)),
+                        child: const Icon(Icons.photo, color: Colors.greenAccent, size: 22),
+                      ),
                     ),
                     GestureDetector(
                       onTap: _captureAction,
@@ -628,7 +679,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SwitchListTile(title: const Text('استنساخ زر الالتقاط'), value: _clone, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _clone = val); _updateParent(); }),
           SwitchListTile(title: const Text('الموقع'), value: true, activeColor: Colors.greenAccent, onChanged: (_) {}),
           SwitchListTile(title: const Text('المستوى الأفقي'), value: _horizon, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _horizon = val); _updateParent(); }),
-          ListTile(title: const Text('طرق التصوير والإعدادات الإضافية'), trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54), onTap: () {}),
+          ListTile(title: const Text('طرق التصوير والإعدادات الإضافية'), trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54), onTap: {}),
           ListTile(
             title: const Text('محسن بورتريه AI'),
             subtitle: Text(_fps, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
