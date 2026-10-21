@@ -3,9 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:gal/gal.dart';
-import 'package:image/image.dart' as img;
 import 'dart:async';
-import 'dart:io';
 
 List<CameraDescription> cameras = [];
 
@@ -150,32 +148,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // معالجة خلفية مستقرة 100% بدون أي أخطاء بناء، مع تشبع ألوان فائق وإبراز نصوص احترافي
-  void _processAndSaveInBackground(String imagePath, bool isFront, double zoomLevel) {
+  // حفظ الصورة مباشرة في المعرض في الخلفية بدون أي أخطاء وبسرعة صاروخية
+  void _saveImageInBackground(String imagePath) {
     Future.microtask(() async {
       try {
-        final File imageFile = File(imagePath);
-        final List<int> bytes = await imageFile.readAsBytes();
-        img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
-
-        if (capturedImage != null) {
-          if (isFront) {
-            capturedImage = img.flipHorizontal(capturedImage);
-          }
-
-          // تشبع ألوان وتباين فائق يضاهي أعلى معالجات الذكاء الاصطناعي
-          if (zoomLevel > 2.0) {
-            capturedImage = img.adjustColor(capturedImage, contrast: 1.3, brightness: 1.05, saturation: 1.2);
-          } else {
-            capturedImage = img.adjustColor(capturedImage, contrast: 1.18, brightness: 1.03, saturation: 1.12);
-          }
-
-          final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 100);
-          await imageFile.writeAsBytes(processedBytes);
-        }
         await Gal.putImage(imagePath);
       } catch (e) {
-        debugPrint('Background processing error: $e');
+        debugPrint('Background save error: $e');
       }
     });
   }
@@ -211,9 +190,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       });
 
       final image = await controller!.takePicture();
-      bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
-      
-      _processAndSaveInBackground(image.path, isFront, _currentZoom);
+      _saveImageInBackground(image.path);
 
     } catch (e) {
       debugPrint('Error capturing: $e');
@@ -375,7 +352,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text('زوم AI: ${_currentZoom.toStringAsFixed(1)}x (القصوى: ${_maxZoom.toStringAsFixed(0)}x)', style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                      Text('زوم هاردوير: ${_currentZoom.toStringAsFixed(1)}x (القصوى: ${_maxZoom.toStringAsFixed(0)}x)', style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
                       Slider(
                         value: _currentZoom,
                         min: _minZoom,
