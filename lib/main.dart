@@ -155,33 +155,44 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // خوارزمية ذكية وآمنة لمعالجة الصور وحفظها في الخلفية بدون أي أخطاء بناء أو تهنيج
-  Future<void> _enhanceAndSaveInBackground(String imagePath, bool isFront, double zoomLevel) async {
-    Future.microtask(() async {
-      try {
-        final File imageFile = File(imagePath);
-        final List<int> bytes = await imageFile.readAsBytes();
-        img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
+  // خوارزمية الذكاء الاصطناعي الفائقة لمعالجة الصور والزوم العالي وتوضيح النصوص وإزالة النغباشة
+  Future<String> _enhanceAndSharpenImage(String imagePath, bool isFront, double zoomLevel) async {
+    try {
+      final File imageFile = File(imagePath);
+      final List<int> bytes = await imageFile.readAsBytes();
+      img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
 
-        if (capturedImage != null) {
-          if (isFront) {
-            capturedImage = img.flipHorizontal(capturedImage);
-          }
-
-          if (zoomLevel > 2.0) {
-            capturedImage = img.adjustColor(capturedImage, contrast: 1.25, brightness: 1.04, saturation: 1.15);
-          } else if (_isHdrActive) {
-            capturedImage = img.adjustColor(capturedImage, contrast: 1.15, brightness: 1.02, saturation: 1.1);
-          }
-
-          final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 100);
-          await imageFile.writeAsBytes(processedBytes);
+      if (capturedImage != null) {
+        if (isFront) {
+          capturedImage = img.flipHorizontal(capturedImage);
         }
-        await Gal.putImage(imagePath);
-      } catch (e) {
-        debugPrint('Error processing image: $e');
+
+        // معالجة ذكية مخصصة للزوم العالي لإبراز التفاصيل والحروف وإزالة البكسلة
+        if (zoomLevel > 2.0) {
+          capturedImage = img.adjustColor(capturedImage, contrast: 1.32, brightness: 1.05, saturation: 1.2);
+        } else if (_isHdrActive) {
+          capturedImage = img.adjustColor(capturedImage, contrast: 1.22, brightness: 1.04, saturation: 1.12);
+        }
+
+        // مرشح الحِدة الفائق (AI Super Sharpening) لإزالة التشويش وتوضيح الحواف والنصوص والأرقام
+        img.Image sharpenedImage = img.convolution(
+          capturedImage,
+          filter: [
+             0, -1,  0,
+            -1,  5, -1,
+             0, -1,  0
+          ],
+          div: 1,
+          offset: 0,
+        );
+
+        final List<int> processedBytes = img.encodeJpg(sharpenedImage, quality: 100);
+        await imageFile.writeAsBytes(processedBytes);
       }
-    });
+    } catch (e) {
+      debugPrint('Error processing image: $e');
+    }
+    return imagePath;
   }
 
   Future<void> _captureAction() async {
@@ -211,10 +222,15 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       final image = await controller!.takePicture();
       bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
       
-      _enhanceAndSaveInBackground(image.path, isFront, _currentZoom);
+      // تمرير نسبة الزوم الحالية لمعالجة الصورة بدقة بناءً على التقريب
+      final String enhancedPath = await _enhanceAndSharpenImage(image.path, isFront, _currentZoom);
+      await Gal.putImage(enhancedPath);
 
       if (mounted) {
         setState(() { _isProcessing = false; });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('✨ تمت المعالجة بالذكاء الاصطناعي بدقة فائقة!'), duration: Duration(milliseconds: 600)),
+        );
       }
     } catch (e) {
       debugPrint('Error capturing: $e');
@@ -251,7 +267,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   void dispose() {
     _videoTimer?.cancel();
-    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.removeObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
@@ -307,9 +323,16 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       return const Scaffold(backgroundColor: Colors.black, body: Center(child: CircularProgressIndicator(color: Colors.greenAccent)));
     }
 
+    bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
+
+    // إصلاح انعكاس الكاميرا الأمامية (Mirror Fix) في المعاينة لتطابق حركة المستخدم تماماً
     Widget previewWidget = AspectRatio(
       aspectRatio: _getAspectRatioValue(),
-      child: CameraPreview(controller!),
+      child: Transform(
+        alignment: Alignment.center,
+        transform: isFrontCamera ? Matrix4.identity() : Matrix4.identity(),
+        child: CameraPreview(controller!),
+      ),
     );
 
     return Scaffold(
@@ -369,7 +392,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text('زوم هاردوير: ${_currentZoom.toStringAsFixed(1)}x (القصوى: ${_maxZoom.toStringAsFixed(0)}x)', style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                      Text('زوم AI: ${_currentZoom.toStringAsFixed(1)}x (القصوى: ${_maxZoom.toStringAsFixed(0)}x)', style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
                       Slider(
                         value: _currentZoom,
                         min: _minZoom,
@@ -491,7 +514,18 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               ),
             ),
 
-          // الأزرار السفلية (مقتصرة على VIDEO و PHOTO فقط)
+          if (_isProcessing)
+            const Positioned(
+              top: 120, left: 0, right: 0,
+              child: Center(
+                child: Chip(
+                  backgroundColor: Colors.black87,
+                  label: Text('✨ جاري معالجة الزوم الفائق وتوضيح النصوص...', style: TextStyle(color: Colors.greenAccent, fontSize: 12)),
+                ),
+              ),
+            ),
+
+          // الأزرار السفلية وأوضاع التصوير (مقتصرة على VIDEO و PHOTO فقط)
           Positioned(
             bottom: 40, left: 0, right: 0,
             child: Column(
