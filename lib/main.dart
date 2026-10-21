@@ -152,7 +152,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // معالجة فائقة الذكاء في الخلفية (منع النغبشة، تصفية التشويش، وتوضيح التفاصيل والزوم)
+  // معالجة ذكية في الخلفية بدون تجميد التطبيق وتصحيح النغبشة والزوم العالي
   void _processAndSaveInBackground(String imagePath, bool isFront, double zoomLevel) {
     Future.microtask(() async {
       try {
@@ -165,17 +165,14 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             capturedImage = img.flipHorizontal(capturedImage);
           }
 
-          // ضبط التعريض واللون حسب ظروف الإضاءة والزوم لمنع السطوع الفاقع
           if (_flashMode == FlashMode.torch || _flashMode == FlashMode.always) {
             capturedImage = img.adjustColor(capturedImage, brightness: 0.92, contrast: 1.1, saturation: 1.05);
           } else if (zoomLevel > 2.0) {
-            // معالجة متقدمة للزوم العالي لتثبيت النصوص وتفادي النغبشة
             capturedImage = img.adjustColor(capturedImage, brightness: 0.95, contrast: 1.25, saturation: 1.1);
           } else if (_isHdrActive) {
             capturedImage = img.adjustColor(capturedImage, contrast: 1.15, brightness: 1.0, saturation: 1.05);
           }
 
-          // تطبيق فلتر حِدة دقيق ونقي (Anti-Noise Sharpening) لعدم ظهور تشويش عند التكبير
           img.Image sharpenedImage = img.convolution(
             capturedImage,
             filter: [
@@ -224,7 +221,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       final image = await controller!.takePicture();
       bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
       
-      // حفظ الصورة ومعالجتها فوراً في الخلفية بدون تعليق البرنامج
       _processAndSaveInBackground(image.path, isFront, _currentZoom);
 
       if (mounted) {
@@ -237,7 +233,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // فتح معرض الصور الفعلي
   Future<void> _openDeviceGallery() async {
     try {
       final List<AssetPathEntity> albums = await PhotoManager.getAssetPathList(type: RequestType.image);
@@ -268,7 +263,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
           }
         }
       }
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('لا توجد صور حديثة في المعرض')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('لا توجد صور حديثة في المعرض')));
+      }
     } catch (e) {
       debugPrint('Error opening gallery: $e');
     }
@@ -444,7 +441,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               ),
             ),
 
-          // شريط الأدوات العلوي
           Positioned(
             top: 45, left: 16, right: 16,
             child: Row(
@@ -483,7 +479,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             ),
           ),
 
-          // لوحة الخيارات المنسدلة
           if (_showExpandedPanel)
             Positioned(
               top: 105, left: 20, right: 20,
@@ -548,7 +543,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               ),
             ),
 
-          // الأزرار السفلية وأوضاع التصوير
           Positioned(
             bottom: 40, left: 0, right: 0,
             child: Column(
@@ -574,7 +568,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    // زر المعرض الفعال (أسفل اليمين)
                     GestureDetector(
                       onTap: _openDeviceGallery,
                       child: Container(
@@ -712,7 +705,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SwitchListTile(title: const Text('استنساخ زر الالتقاط'), value: _clone, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _clone = val); _updateParent(); }),
           SwitchListTile(title: const Text('الموقع'), value: true, activeColor: Colors.greenAccent, onChanged: (_) {}),
           SwitchListTile(title: const Text('المستوى الأفقي'), value: _horizon, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _horizon = val); _updateParent(); }),
-          ListTile(title: const Text('طرق التصوير والإعدادات الإضافية'), trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54), onTap: {}),
+          ListTile(title: const Text('طرق التصوير والإعدادات الإضافية'), trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54), onTap: () {}),
           ListTile(
             title: const Text('محسن بورتريه AI'),
             subtitle: Text(_fps, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
