@@ -48,7 +48,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   FlashMode _flashMode = FlashMode.off;
   double _currentZoom = 1.0;
   double _minZoom = 1.0;
-  double _maxZoom = 15.0; // سيتم تحديثه تلقائياً حسب قدرة هاردوير الهاتف
+  double _maxZoom = 1.0; // سيتم تحديثه ليتوافق مع الزوم الأصلي الهاردويري لكل هاتف حصرياً
   
   bool _showZoomWheel = false;
   DateTime _lastZoomInteraction = DateTime.now();
@@ -117,7 +117,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // التعرف التلقائي على قدرات الكاميرا والزوم الخاص بكل هاتف
+  // التعرف التلقائي على الزوم الأصلي الهاردويري الحقيقي لكل هاتف حصرياً
   Future<void> _initCamera(int index) async {
     if (controller != null) await controller!.dispose();
     
@@ -131,12 +131,11 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     try {
       await controller!.initialize();
       
-      // جلب حدود الزوم الحقيقية المدعومة من هاردوير الموبايل الحالي تلقائياً
       _minZoom = await controller!.getMinZoomLevel();
       double hardwareMaxZoom = await controller!.getMaxZoomLevel();
       
-      _maxZoom = hardwareMaxZoom > 1.0 ? hardwareMaxZoom : 15.0;
-      if (_maxZoom < 15.0) _maxZoom = 15.0; 
+      // اعتماد أقصى زوم يدعمه هاردوير الموبايل الفعلي تماماً بدون أي أرقام افتراضية
+      _maxZoom = hardwareMaxZoom > _minZoom ? hardwareMaxZoom : _minZoom;
 
       _currentZoom = _minZoom;
       await controller!.setZoomLevel(_currentZoom);
@@ -155,7 +154,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // خوارزمية الذكاء الاصطناعي الفائقة لمعالجة الصور والحفاظ على اللمعان والجودة العالية
+  // معالجة ذكية وموحدة تماماً بين الكاميرا الأمامية والخلفية لضمان نفس الجودة الفائقة واللمعان الجذاب
   Future<String> _enhanceAndSharpenImage(String imagePath, bool isFront, double zoomLevel) async {
     try {
       final File imageFile = File(imagePath);
@@ -163,6 +162,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
 
       if (capturedImage != null) {
+        // تعديل الانعكاس للصورة النهائية للأمامية لتكون عدلة وطبيعية تماماً
+        if (isFront) {
+          capturedImage = img.flipHorizontal(capturedImage);
+        }
+
+        // تطبيق معالجة متطورة توفر نفس اللمعان والبريق والجودة العالية للأمامية والخلفية
         if (zoomLevel > 2.0) {
           capturedImage = img.adjustColor(capturedImage, contrast: 1.35, brightness: 1.08, saturation: 1.2);
         } else if (_isHdrActive) {
@@ -260,7 +265,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   void dispose() {
     _videoTimer?.cancel();
-    WidgetsBinding.instance.removeObserver(this);
+    WidgetsBinding.instance.addObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
@@ -318,7 +323,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
 
-    // تعديل الانعكاس للبريفيو الأمامي فقط بدون التأثير على الصورة النهائية
+    // ضبط البريفيو الأمامي ليعكس الصورة بشكل صحيح ومريح للطبيعة دون قلب الصورة النهائية
     Widget previewWidget = AspectRatio(
       aspectRatio: _getAspectRatioValue(),
       child: Transform(
@@ -370,7 +375,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               ),
             ),
 
-          // مؤشر الزوم التفاعلي
+          // عرض الزوم الأصلي الهاردويري الفعلي للجهاز الحالي بدقة
           if (_showZoomWheel)
             Positioned(
               bottom: 220, left: 0, right: 0,
@@ -385,7 +390,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text('زوم هاردوير: ${_currentZoom.toStringAsFixed(1)}x (القصوى: ${_maxZoom.toStringAsFixed(0)}x)', style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                      Text('الزوم الأصلي: ${_currentZoom.toStringAsFixed(1)}x (أقصى زوم للهاتف: ${_maxZoom.toStringAsFixed(0)}x)', style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
                       Slider(
                         value: _currentZoom,
                         min: _minZoom,
@@ -507,7 +512,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               ),
             ),
 
-          // الأزرار السفلية (PHOTO و VIDEO فقط بدون بورتريه أو ليلي)
+          // الأزرار السفلية وأوضاع التصوير (PHOTO و VIDEO فقط)
           Positioned(
             bottom: 40, left: 0, right: 0,
             child: Column(
