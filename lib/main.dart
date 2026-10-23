@@ -4,7 +4,6 @@ import 'package:camera/camera.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:gal/gal.dart';
 import 'dart:async';
-import 'dart:io';
 
 List<CameraDescription> cameras = [];
 
@@ -50,7 +49,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   double _maxZoom = 15.0;
   
   bool _showZoomWheel = false;
-  DateTime _lastZoomInteraction = DateTime.now();
 
   String _currentMode = 'PHOTO';
   bool _isRecording = false;
@@ -294,7 +292,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               onScaleUpdate: (details) async {
                 double scaleFactor = details.scale > 1 ? 1.02 : 0.98;
                 double newZoom = (_currentZoom * scaleFactor).clamp(_minZoom, _maxZoom);
-                setState(() { _currentZoom = newZoom; _showZoomWheel = true; _lastZoomInteraction = DateTime.now(); });
+                setState(() { _currentZoom = newZoom; _showZoomWheel = true; });
                 await controller!.setZoomLevel(_currentZoom);
               },
               child: Center(child: previewWidget),
@@ -354,7 +352,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text('زوم AI: ${_currentZoom.toStringAsFixed(1)}x (القصوى: ${_maxZoom.toStringAsFixed(0)}x)', style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                      Text('زوم: ${_currentZoom.toStringAsFixed(1)}x (القصوى: ${_maxZoom.toStringAsFixed(0)}x)', style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
                       Slider(
                         value: _currentZoom,
                         min: _minZoom,
@@ -362,7 +360,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                         activeColor: Colors.greenAccent,
                         inactiveColor: Colors.white24,
                         onChanged: (val) async {
-                          setState(() { _currentZoom = val; _lastZoomInteraction = DateTime.now(); });
+                          setState(() { _currentZoom = val; });
                           await controller!.setZoomLevel(_currentZoom);
                         },
                       ),
