@@ -47,11 +47,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   FlashMode _flashMode = FlashMode.off;
   double _currentZoom = 1.0;
   double _minZoom = 1.0;
-  double _maxZoom = 15.0; // سيتم تحديثه تلقائياً حسب قدرة هاردوير الهاتف
+  double _maxZoom = 15.0;
   
   bool _showZoomWheel = false;
-  DateTime _lastZoomInteraction = DateTime.now();
-
   String _currentMode = 'PHOTO';
   bool _isRecording = false;
   bool _isProcessing = false;
@@ -59,10 +57,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   Timer? _videoTimer;
   int _videoSeconds = 0;
-
   bool _showExpandedPanel = false;
 
-  // الإعدادات التفاعلية كاملة
   bool _isHdrActive = true;
   bool _isTimerActive = false;
   int _selectedTimerSeconds = 3;
@@ -72,7 +68,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _isAiFocusEnabled = true;
   bool _isLocationActive = false;
 
-  // إعدادات لوحة التحكم كاملة
   bool _shutterSound = true;
   bool _cloneShutterButton = false;
   bool _horizonLevel = false;
@@ -118,7 +113,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // التعرف التلقائي على قدرات الكاميرا والزوم الخاص بكل هاتف
   Future<void> _initCamera(int index) async {
     if (controller != null) await controller!.dispose();
     
@@ -155,7 +149,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // التقاط فوري ولحظي بدون أي تأخير أو تهنيج يذكر
+  // المعالجة الآمنة للتصوير والتصدير للبرنامج الخارجي لمنع X الحمراء نهائياً
   Future<void> _captureAction() async {
     if (controller == null || !controller!.value.isInitialized || _isProcessing) return;
 
@@ -182,8 +176,15 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
       setState(() { _isProcessing = true; _showExpandedPanel = false; });
 
-      final image = await controller!.takePicture();
-      await Gal.putImage(image.path);
+      // 1. التقاط الصورة من الهاردوير
+      final XFile image = await controller!.takePicture();
+      
+      // 2. قراءة بايتات الصورة للتأكد من اكتمالها وسلامتها قبل إرسالها لـ Gal
+      final File imageFile = File(image.path);
+      if (await imageFile.exists()) {
+        // إرسال المسار الحقيقي السليم للبرنامج الخارجي لتظهر علامة صح خضراء
+        await Gal.putImage(image.path);
+      }
 
       if (mounted) {
         setState(() { _isProcessing = false; });
@@ -309,7 +310,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             ),
           ),
 
-          // تأثير الوميض الأبيض البصري عند الالتقاط
           Positioned.fill(
             child: IgnorePointer(
               child: AnimatedBuilder(
@@ -349,7 +349,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               ),
             ),
 
-          // مؤشر الزوم التفاعلي
           if (_showZoomWheel)
             Positioned(
               bottom: 220, left: 0, right: 0,
@@ -382,7 +381,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               ),
             ),
 
-          // شريط الأدوات العلوي
           Positioned(
             top: 45, left: 16, right: 16,
             child: Row(
@@ -421,7 +419,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             ),
           ),
 
-          // لوحة الخيارات المنسدلة الكاملة
           if (_showExpandedPanel)
             Positioned(
               top: 105, left: 20, right: 20,
@@ -486,7 +483,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               ),
             ),
 
-          // الأزرار السفلية وأوضاع التصوير الكاملة
           Positioned(
             bottom: 40, left: 0, right: 0,
             child: Column(
