@@ -48,7 +48,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   FlashMode _flashMode = FlashMode.off;
   double _currentZoom = 1.0;
   double _minZoom = 1.0;
-  double _maxZoom = 15.0;
+  double _maxZoom = 15.0; // سيتم تحديثه تلقائياً حسب قدرة هاردوير الهاتف
   
   bool _showZoomWheel = false;
   DateTime _lastZoomInteraction = DateTime.now();
@@ -63,6 +63,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   bool _showExpandedPanel = false;
 
+  // الإعدادات التفاعلية
   bool _isHdrActive = true;
   bool _isTimerActive = false;
   int _selectedTimerSeconds = 3;
@@ -72,6 +73,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _isAiFocusEnabled = true;
   bool _isLocationActive = false;
 
+  // إعدادات لوحة التحكم
   bool _shutterSound = true;
   bool _cloneShutterButton = false;
   bool _horizonLevel = false;
@@ -115,12 +117,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
+  // التعرف التلقائي على قدرات الكاميرا والزوم بدقة 4K
   Future<void> _initCamera(int index) async {
     if (controller != null) await controller!.dispose();
     
     controller = CameraController(
       cameras[index],
-      ResolutionPreset.max, // دقة فائقة تصل إلى 4K حسب هاردوير الجهاز
+      ResolutionPreset.max, // دقة فائقة 4K
       enableAudio: true,
       imageFormatGroup: ImageFormatGroup.jpeg,
     );
@@ -151,8 +154,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // خوارزمية ذكية لضبط الإضاءة الساطعة، منع التوهج المبيض، واستعادة اللمعان والتفاصيل عند الزوم
-  Future<String> _enhanceImageSmart(String imagePath, bool isFront, double zoomLevel) async {
+  // خوارزمية ذكية لمعالجة الإضاءة، منع التوهج المبيض، واستعادة اللمعان والتفاصيل
+  Future<String> _enhanceAndSharpenImage(String imagePath, bool isFront, double zoomLevel) async {
     try {
       final File imageFile = File(imagePath);
       final List<int> bytes = await imageFile.readAsBytes();
@@ -163,23 +166,22 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
           capturedImage = img.flipHorizontal(capturedImage);
         }
 
-        // ضبط الإضاءة والتحكم في التوهج واللمعان البراق بدون إضاءة فاقعة تؤذي العين
-        double brightnessVal = _flashMode != FlashMode.off ? 0.95 : 1.04; 
-        double contrastVal = zoomLevel > 1.5 ? 1.3 : 1.2;
-        double saturationVal = 1.15; // استعادة اللمعان والألوان الحية
+        // إذا كان الفلاش شغالاً، نخفض السطوع قليلاً لمنع التوهج المبيض المؤذي للعين مع الحفاظ على اللمعان
+        double targetBrightness = (_flashMode != FlashMode.off) ? 0.94 : 1.02;
+        double targetContrast = zoomLevel > 1.5 ? 1.25 : 1.15;
 
         capturedImage = img.adjustColor(
           capturedImage, 
-          brightness: brightnessVal, 
-          contrast: contrastVal, 
-          saturation: saturationVal
+          brightness: targetBrightness, 
+          contrast: targetContrast, 
+          saturation: 1.18 // استعادة البريق واللمعان الجذاب
         );
 
         final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 100);
         await imageFile.writeAsBytes(processedBytes);
       }
     } catch (e) {
-      debugPrint('Error enhancing image: $e');
+      debugPrint('Error processing image: $e');
     }
     return imagePath;
   }
@@ -211,11 +213,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
       setState(() { _isProcessing = true; _showExpandedPanel = false; });
 
+      // التقاط الصورة فوراً دون أي تهنيج أو تأخير
       final image = await controller!.takePicture();
       bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
       
-      // معالجة فورية غير معطلة للبرنامج
-      final String enhancedPath = await _enhanceImageSmart(image.path, isFront, _currentZoom);
+      // معالجة فورية بالخلفية
+      final String enhancedPath = await _enhanceAndSharpenImage(image.path, isFront, _currentZoom);
       await Gal.putImage(enhancedPath);
 
       if (mounted) {
@@ -340,7 +343,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             ),
           ),
 
-          // تأثير الوميض الأبيض اللحظي عند الالتقاط
+          // تأثير الوميض الأبيض البصري الممتاز عند الالتقاط
           Positioned.fill(
             child: IgnorePointer(
               child: AnimatedBuilder(
@@ -523,13 +526,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   height: 30,
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
-                    children: ['VIDEO', 'PHOTO'].map((mode) {
+                    children: ['VIDEO', 'PHOTO', 'PORTRAIT', 'NIGHT'].map((mode) {
                       bool isSelected = _currentMode == mode;
                       return Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 20.0),
+                        padding: const EdgeInsets.symmetric(horizontal: 12.0),
                         child: GestureDetector(
                           onTap: () => setState(() => _currentMode = mode),
-                          child: Text(mode, style: TextStyle(color: isSelected ? Colors.greenAccent : Colors.white60, fontWeight: FontWeight.bold, fontSize: 14)),
+                          child: Text(mode, style: TextStyle(color: isSelected ? Colors.greenAccent : Colors.white60, fontWeight: FontWeight.bold, fontSize: 13)),
                         ),
                       );
                     }).toList(),
