@@ -117,13 +117,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // التعرف التلقائي على قدرات الكاميرا والزوم بدقة 4K
+  // التعرف التلقائي على قدرات الكاميرا والزوم الخاص بكل هاتف
   Future<void> _initCamera(int index) async {
     if (controller != null) await controller!.dispose();
     
     controller = CameraController(
       cameras[index],
-      ResolutionPreset.max, // دقة فائقة 4K
+      ResolutionPreset.max,
       enableAudio: true,
       imageFormatGroup: ImageFormatGroup.jpeg,
     );
@@ -154,7 +154,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // خوارزمية ذكية لمعالجة الإضاءة، منع التوهج المبيض، واستعادة اللمعان والتفاصيل
+  // خوارزمية ذكية وسريعة جداً لمعالجة الصورة بدون تهنيج
   Future<String> _enhanceAndSharpenImage(String imagePath, bool isFront, double zoomLevel) async {
     try {
       final File imageFile = File(imagePath);
@@ -166,18 +166,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
           capturedImage = img.flipHorizontal(capturedImage);
         }
 
-        // إذا كان الفلاش شغالاً، نخفض السطوع قليلاً لمنع التوهج المبيض المؤذي للعين مع الحفاظ على اللمعان
-        double targetBrightness = (_flashMode != FlashMode.off) ? 0.94 : 1.02;
-        double targetContrast = zoomLevel > 1.5 ? 1.25 : 1.15;
+        if (zoomLevel > 1.5) {
+          capturedImage = img.adjustColor(capturedImage, contrast: 1.2, brightness: 1.02, saturation: 1.12);
+        } else if (_isHdrActive) {
+          capturedImage = img.adjustColor(capturedImage, contrast: 1.1, brightness: 1.0, saturation: 1.05);
+        }
 
-        capturedImage = img.adjustColor(
-          capturedImage, 
-          brightness: targetBrightness, 
-          contrast: targetContrast, 
-          saturation: 1.18 // استعادة البريق واللمعان الجذاب
-        );
-
-        final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 100);
+        final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 95);
         await imageFile.writeAsBytes(processedBytes);
       }
     } catch (e) {
@@ -203,7 +198,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
 
     try {
-      // تشغيلوميض الشاشة الأبيض وصوت الالتقاط بسلاسة
       _flashAnimController.forward().then((_) => _flashAnimController.reverse());
 
       if (_shutterSound) {
@@ -213,11 +207,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
       setState(() { _isProcessing = true; _showExpandedPanel = false; });
 
-      // التقاط الصورة فوراً دون أي تهنيج أو تأخير
       final image = await controller!.takePicture();
       bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
       
-      // معالجة فورية بالخلفية
       final String enhancedPath = await _enhanceAndSharpenImage(image.path, isFront, _currentZoom);
       await Gal.putImage(enhancedPath);
 
@@ -343,7 +335,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             ),
           ),
 
-          // تأثير الوميض الأبيض البصري الممتاز عند الالتقاط
           Positioned.fill(
             child: IgnorePointer(
               child: AnimatedBuilder(
@@ -397,7 +388,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text('زوم 4K: ${_currentZoom.toStringAsFixed(1)}x (القصوى: ${_maxZoom.toStringAsFixed(0)}x)', style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                      Text('زوم AI: ${_currentZoom.toStringAsFixed(1)}x (القصوى: ${_maxZoom.toStringAsFixed(0)}x)', style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
                       Slider(
                         value: _currentZoom,
                         min: _minZoom,
