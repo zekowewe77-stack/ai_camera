@@ -135,6 +135,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       _minZoom = await controller!.getMinZoomLevel();
       double hardwareMaxZoom = await controller!.getMaxZoomLevel();
       
+      // إذا كان الموبايل يدعم زوم عالي (مثل 10x أو 20x أو أكثر) نتبناه، وإذا كان أقل نضبطه ليدعم حتى 15x افتراضياً مع المعالجة
       _maxZoom = hardwareMaxZoom > 1.0 ? hardwareMaxZoom : 15.0;
       if (_maxZoom < 15.0) _maxZoom = 15.0; 
 
@@ -163,7 +164,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
 
       if (capturedImage != null) {
-        // تم إلغاء القلب في الصورة النهائية لكي تظل عدلة وصحيحة
+        if (isFront) {
+          capturedImage = img.flipHorizontal(capturedImage);
+        }
+
         // معالجة ذكية مخصصة للزوم العالي لإبراز التفاصيل والحروف مثل الصورة المرجعية
         if (zoomLevel > 2.0) {
           capturedImage = img.adjustColor(capturedImage, contrast: 1.3, brightness: 1.05, saturation: 1.15);
@@ -322,12 +326,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
 
-    // تم تعديل انعكاس البريفيو للأمامية ليصبح ميرور طبيعي مريح (اليمين يمين والشمال شمال) دون قلب الصورة النهائية
+    // تم تعديل انعكاس البريفيو للأمامية ليصبح ميرور صحيح ومطابق للحركة الطبيعية
     Widget previewWidget = AspectRatio(
       aspectRatio: _getAspectRatioValue(),
       child: Transform(
         alignment: Alignment.center,
-        transform: isFrontCamera ? Matrix4.identity() : Matrix4.identity(),
+        transform: isFrontCamera ? Matrix4.rotationY(3.14159) : Matrix4.identity(),
         child: CameraPreview(controller!),
       ),
     );
