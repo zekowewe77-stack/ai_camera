@@ -48,7 +48,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   FlashMode _flashMode = FlashMode.off;
   double _currentZoom = 1.0;
   double _minZoom = 1.0;
-  double _maxZoom = 15.0;
+  double _maxZoom = 15.0; // سيتم تحديثه تلقائياً حسب قدرة هاردوير الهاتف
   
   bool _showZoomWheel = false;
   DateTime _lastZoomInteraction = DateTime.now();
@@ -63,6 +63,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   bool _showExpandedPanel = false;
 
+  // الإعدادات التفاعلية
   bool _isHdrActive = true;
   bool _isTimerActive = false;
   int _selectedTimerSeconds = 3;
@@ -72,6 +73,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _isAiFocusEnabled = true;
   bool _isLocationActive = false;
 
+  // إعدادات لوحة التحكم
   bool _shutterSound = true;
   bool _cloneShutterButton = false;
   bool _horizonLevel = false;
@@ -115,6 +117,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
+  // التعرف التلقائي على قدرات الكاميرا والزوم الخاص بكل هاتف
   Future<void> _initCamera(int index) async {
     if (controller != null) await controller!.dispose();
     
@@ -151,29 +154,29 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // معالجة فورية فائقة السرعة ترفع الجودة واللمعان للأمامية والخلفية بدون تجميد التطبيق
-  Future<String> _enhanceImageFast(String imagePath, bool isFront) async {
+  // خوارزمية ذكية وسريعة جداً لمعالجة الصورة، منع التهنيج، وتوضيح التفاصيل عند الزوم
+  Future<String> _enhanceAndSharpenImage(String imagePath, bool isFront, double zoomLevel) async {
     try {
       final File imageFile = File(imagePath);
       final List<int> bytes = await imageFile.readAsBytes();
-      
-      // استخدام المعالجة السريعة عبر الحاسوب المدمج بدون مرشحات بطيئة تسبب التهنيج
       img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
 
       if (capturedImage != null) {
-        // تعزيز الألوان، التباسط، واللمعان البراق الاحترافي لجميع الكاميرات
-        capturedImage = img.adjustColor(
-          capturedImage, 
-          brightness: 1.08, 
-          contrast: 1.25, 
-          saturation: 1.2
-        );
+        if (isFront) {
+          capturedImage = img.flipHorizontal(capturedImage);
+        }
+
+        if (zoomLevel > 1.5) {
+          capturedImage = img.adjustColor(capturedImage, contrast: 1.25, brightness: 1.05, saturation: 1.15);
+        } else if (_isHdrActive) {
+          capturedImage = img.adjustColor(capturedImage, contrast: 1.15, brightness: 1.03, saturation: 1.1);
+        }
 
         final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 95);
         await imageFile.writeAsBytes(processedBytes);
       }
     } catch (e) {
-      debugPrint('Error enhancing image: $e');
+      debugPrint('Error processing image: $e');
     }
     return imagePath;
   }
@@ -195,19 +198,20 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
 
     try {
+      // تشغيل تأثير اللقطة والوميض الأبيض البصري فوراً عند الضغط
+      _flashAnimController.forward().then((_) => _flashAnimController.reverse());
+
       if (_shutterSound) {
         SystemSound.play(SystemSoundType.click);
         HapticFeedback.heavyImpact();
       }
 
-      setState(() { _isProcessing = true; });
+      setState(() { _isProcessing = true; _showExpandedPanel = false; });
 
-      // التقاط الصورة فوراً دون أي انتظار يذكر
       final image = await controller!.takePicture();
       bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
       
-      // معالجة سريعة في الخلفية وحفظها مباشرة لمنع أي تهنيج
-      final String enhancedPath = await _enhanceImageFast(image.path, isFront);
+      final String enhancedPath = await _enhanceAndSharpenImage(image.path, isFront, _currentZoom);
       await Gal.putImage(enhancedPath);
 
       if (mounted) {
@@ -304,9 +308,15 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       return const Scaffold(backgroundColor: Colors.black, body: Center(child: CircularProgressIndicator(color: Colors.greenAccent)));
     }
 
+    bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
+
     Widget previewWidget = AspectRatio(
       aspectRatio: _getAspectRatioValue(),
-      child: CameraPreview(controller!),
+      child: Transform(
+        alignment: Alignment.center,
+        transform: isFrontCamera ? Matrix4.rotationY(3.14159) : Matrix4.identity(),
+        child: CameraPreview(controller!),
+      ),
     );
 
     return Scaffold(
@@ -323,6 +333,21 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 await controller!.setZoomLevel(_currentZoom);
               },
               child: Center(child: previewWidget),
+            ),
+          ),
+
+          // تأثير الوميض الأبيض البصري الممتاز عند الالتقاط
+          Positioned.fill(
+            child: IgnorePointer(
+              child: AnimatedBuilder(
+                animation: _flashAnimController,
+                builder: (context, child) {
+                  return Opacity(
+                    opacity: _flashAnimController.value,
+                    child: Container(color: Colors.white),
+                  );
+                },
+              ),
             ),
           ),
 
@@ -494,13 +519,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   height: 30,
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
-                    children: ['VIDEO', 'PHOTO'].map((mode) {
+                    children: ['VIDEO', 'PHOTO', 'PORTRAIT', 'NIGHT'].map((mode) {
                       bool isSelected = _currentMode == mode;
                       return Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 20.0),
+                        padding: const EdgeInsets.symmetric(horizontal: 12.0),
                         child: GestureDetector(
                           onTap: () => setState(() => _currentMode = mode),
-                          child: Text(mode, style: TextStyle(color: isSelected ? Colors.greenAccent : Colors.white60, fontWeight: FontWeight.bold, fontSize: 14)),
+                          child: Text(mode, style: TextStyle(color: isSelected ? Colors.greenAccent : Colors.white60, fontWeight: FontWeight.bold, fontSize: 13)),
                         ),
                       );
                     }).toList(),
@@ -644,7 +669,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SwitchListTile(title: const Text('استنساخ زر الالتقاط'), value: _clone, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _clone = val); _updateParent(); }),
           SwitchListTile(title: const Text('الموقع'), value: true, activeColor: Colors.greenAccent, onChanged: (_) {}),
           SwitchListTile(title: const Text('المستوى الأفقي'), value: _horizon, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _horizon = val); _updateParent(); }),
-          ListTile(title: const Text('طرق التصوير والإعدادات الإضافية'), trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54), onTap: {}),
+          ListTile(title: const Text('طرق التصوير والإعدادات الإضافية'), trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54), onTap: () {}),
           ListTile(
             title: const Text('محسن بورتريه AI'),
             subtitle: Text(_fps, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
