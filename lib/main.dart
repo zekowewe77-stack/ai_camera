@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:gal/gal.dart';
-import 'package:image/image.dart' as img;
 import 'dart:async';
 import 'dart:io';
 
@@ -154,33 +153,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // خوارزمية ذكية وسريعة جداً لمعالجة الصورة بدون تهنيج
-  Future<String> _enhanceAndSharpenImage(String imagePath, bool isFront, double zoomLevel) async {
-    try {
-      final File imageFile = File(imagePath);
-      final List<int> bytes = await imageFile.readAsBytes();
-      img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
-
-      if (capturedImage != null) {
-        if (isFront) {
-          capturedImage = img.flipHorizontal(capturedImage);
-        }
-
-        if (zoomLevel > 1.5) {
-          capturedImage = img.adjustColor(capturedImage, contrast: 1.2, brightness: 1.02, saturation: 1.12);
-        } else if (_isHdrActive) {
-          capturedImage = img.adjustColor(capturedImage, contrast: 1.1, brightness: 1.0, saturation: 1.05);
-        }
-
-        final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 95);
-        await imageFile.writeAsBytes(processedBytes);
-      }
-    } catch (e) {
-      debugPrint('Error processing image: $e');
-    }
-    return imagePath;
-  }
-
+  // التقاط فوري بدون أي تأخير أو تهنيج يذكر لمنع قفل الكاميرا
   Future<void> _captureAction() async {
     if (controller == null || !controller!.value.isInitialized || _isProcessing) return;
 
@@ -198,6 +171,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
 
     try {
+      // تشغيل تأثير الوميض الأبيض وصوت الالتقاط بشكل سلس ولحظي
       _flashAnimController.forward().then((_) => _flashAnimController.reverse());
 
       if (_shutterSound) {
@@ -207,11 +181,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
       setState(() { _isProcessing = true; _showExpandedPanel = false; });
 
+      // التقاط الصورة وحفظها مباشرة بدون عمليات معالجة ثقيلة تسبب التجميد
       final image = await controller!.takePicture();
-      bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
-      
-      final String enhancedPath = await _enhanceAndSharpenImage(image.path, isFront, _currentZoom);
-      await Gal.putImage(enhancedPath);
+      await Gal.putImage(image.path);
 
       if (mounted) {
         setState(() { _isProcessing = false; });
@@ -251,7 +223,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   void dispose() {
     _videoTimer?.cancel();
-    WidgetsBinding.instance.removeObserver(this);
+    WidgetsBinding.instance.addObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
@@ -335,6 +307,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             ),
           ),
 
+          // تأثير الوميض الأبيض البصري الممتاز عند الالتقاط
           Positioned.fill(
             child: IgnorePointer(
               child: AnimatedBuilder(
@@ -690,6 +663,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               );
             },
           ),
+          SwitchListTile(title: const Text('مسح رموز QR'), value: _qr, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _qr = val); _updateParent(); }),
           SwitchListTile(title: const Text('مسح رموز QR'), value: _qr, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _qr = val); _updateParent(); }),
           SwitchListTile(title: const Text('الإشعار بالعدسات المتسخة'), value: _lens, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _lens = val); _updateParent(); }),
           const Divider(color: Colors.white24),
