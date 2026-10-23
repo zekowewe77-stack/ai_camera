@@ -324,16 +324,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       return const Scaffold(backgroundColor: Colors.black, body: Center(child: CircularProgressIndicator(color: Colors.greenAccent)));
     }
 
-    bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
-
-    // تم تعديل انعكاس البريفيو للأمامية ليصبح ميرور صحيح ومطابق للحركة الطبيعية
     Widget previewWidget = AspectRatio(
       aspectRatio: _getAspectRatioValue(),
-      child: Transform(
-        alignment: Alignment.center,
-        transform: isFrontCamera ? Matrix4.rotationY(3.14159) : Matrix4.identity(),
-        child: CameraPreview(controller!),
-      ),
+      child: CameraPreview(controller!),
     );
 
     return Scaffold(
@@ -686,7 +679,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SwitchListTile(title: const Text('استنساخ زر الالتقاط'), value: _clone, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _clone = val); _updateParent(); }),
           SwitchListTile(title: const Text('الموقع'), value: true, activeColor: Colors.greenAccent, onChanged: (_) {}),
           SwitchListTile(title: const Text('المستوى الأفقي'), value: _horizon, activeColor: Colors.greenAccent, onChanged: (val) { setState(() => _horizon = val); _updateParent(); }),
-          ListTile(title: const Text('طرق التصوير والإعدادات الإضافية'), trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54), onTap: {}),
+          ListTile(title: const Text('طرق التصوير والإعدادات الإضافية'), trailing: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white54), onTap: () {}),
           ListTile(
             title: const Text('محسن بورتريه AI'),
             subtitle: Text(_fps, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
