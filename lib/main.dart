@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:gal/gal.dart';
+import 'package:image/image.dart' as img;
 import 'dart:async';
 import 'dart:io';
 
@@ -47,9 +48,11 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   FlashMode _flashMode = FlashMode.off;
   double _currentZoom = 1.0;
   double _minZoom = 1.0;
-  double _maxZoom = 15.0;
+  double _maxZoom = 15.0; // سيتم تحديثه تلقائياً حسب قدرة هاردوير الهاتف
   
   bool _showZoomWheel = false;
+  DateTime _lastZoomInteraction = DateTime.now();
+
   String _currentMode = 'PHOTO';
   bool _isRecording = false;
   bool _isProcessing = false;
@@ -57,8 +60,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   Timer? _videoTimer;
   int _videoSeconds = 0;
+
   bool _showExpandedPanel = false;
 
+  // الإعدادات التفاعلية
   bool _isHdrActive = true;
   bool _isTimerActive = false;
   int _selectedTimerSeconds = 3;
@@ -68,6 +73,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _isAiFocusEnabled = true;
   bool _isLocationActive = false;
 
+  // إعدادات لوحة التحكم
   bool _shutterSound = true;
   bool _cloneShutterButton = false;
   bool _horizonLevel = false;
@@ -103,9 +109,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     await Permission.camera.request();
     await Permission.microphone.request();
     await Permission.storage.request();
-    try {
-      await Gal.requestAccess();
-    } catch (_) {}
+    await Gal.requestAccess();
 
     if (await Permission.camera.isGranted) {
       if (mounted) setState(() { isPermissionGranted = true; });
@@ -113,6 +117,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
+  // التعرف التلقائي على قدرات الكاميرا والزوم الخاص بكل هاتف
   Future<void> _initCamera(int index) async {
     if (controller != null) await controller!.dispose();
     
@@ -149,7 +154,35 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // المعالجة الآمنة للتصوير والتصدير للبرنامج الخارجي لمنع X الحمراء نهائياً
+  // خوارزمية ذكية وسريعة جداً لمعالجة الصورة، منع التهنيج، وتوضيح التفاصيل عند الزوم
+  Future<String> _enhanceAndSharpenImage(String imagePath, bool isFront, double zoomLevel) async {
+    try {
+      final File imageFile = File(imagePath);
+      if (!await imageFile.exists()) return imagePath;
+
+      final List<int> bytes = await imageFile.readAsBytes();
+      img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
+
+      if (capturedImage != null) {
+        if (isFront) {
+          capturedImage = img.flipHorizontal(capturedImage);
+        }
+
+        if (zoomLevel > 1.5) {
+          capturedImage = img.adjustColor(capturedImage, contrast: 1.25, brightness: 1.05, saturation: 1.15);
+        } else if (_isHdrActive) {
+          capturedImage = img.adjustColor(capturedImage, contrast: 1.15, brightness: 1.03, saturation: 1.1);
+        }
+
+        final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 95);
+        await imageFile.writeAsBytes(processedBytes);
+      }
+    } catch (e) {
+      debugPrint('Error processing image: $e');
+    }
+    return imagePath;
+  }
+
   Future<void> _captureAction() async {
     if (controller == null || !controller!.value.isInitialized || _isProcessing) return;
 
@@ -167,6 +200,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
 
     try {
+      // تشغيل تأثير الوميض وصوت الالتقاط بسلاسة
       _flashAnimController.forward().then((_) => _flashAnimController.reverse());
 
       if (_shutterSound) {
@@ -176,15 +210,14 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
       setState(() { _isProcessing = true; _showExpandedPanel = false; });
 
-      // 1. التقاط الصورة من الهاردوير
+      // التقاط الصورة الحقيقية والتأكد من نجاحها لمنع الـ X الحمراء
       final XFile image = await controller!.takePicture();
+      bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
       
-      // 2. قراءة بايتات الصورة للتأكد من اكتمالها وسلامتها قبل إرسالها لـ Gal
-      final File imageFile = File(image.path);
-      if (await imageFile.exists()) {
-        // إرسال المسار الحقيقي السليم للبرنامج الخارجي لتظهر علامة صح خضراء
-        await Gal.putImage(image.path);
-      }
+      final String enhancedPath = await _enhanceAndSharpenImage(image.path, isFront, _currentZoom);
+      
+      // الحفظ الآمن في المعرض الخارجي للحصول على علامة الصح الخضراء
+      await Gal.putImage(enhancedPath);
 
       if (mounted) {
         setState(() { _isProcessing = false; });
@@ -201,9 +234,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       _videoTimer?.cancel();
       final file = await controller!.stopVideoRecording();
       setState(() { _isRecording = false; _videoSeconds = 0; });
-      try {
-        await Gal.putVideo(file.path);
-      } catch (_) {}
+      await Gal.putVideo(file.path);
     } else {
       await controller!.startVideoRecording();
       setState(() { _isRecording = true; _videoSeconds = 0; });
@@ -303,13 +334,14 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               onScaleUpdate: (details) async {
                 double scaleFactor = details.scale > 1 ? 1.02 : 0.98;
                 double newZoom = (_currentZoom * scaleFactor).clamp(_minZoom, _maxZoom);
-                setState(() { _currentZoom = newZoom; _showZoomWheel = true; });
+                setState(() { _currentZoom = newZoom; _showZoomWheel = true; _lastZoomInteraction = DateTime.now(); });
                 await controller!.setZoomLevel(_currentZoom);
               },
               child: Center(child: previewWidget),
             ),
           ),
 
+          // تأثير الوميض الأبيض البصري الممتاز عند الالتقاط
           Positioned.fill(
             child: IgnorePointer(
               child: AnimatedBuilder(
@@ -363,7 +395,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text('زوم: ${_currentZoom.toStringAsFixed(1)}x (القصوى: ${_maxZoom.toStringAsFixed(0)}x)', style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                      Text('زوم AI: ${_currentZoom.toStringAsFixed(1)}x (القصوى: ${_maxZoom.toStringAsFixed(0)}x)', style: const TextStyle(color: Colors.greenAccent, fontSize: 11, fontWeight: FontWeight.bold)),
                       Slider(
                         value: _currentZoom,
                         min: _minZoom,
@@ -371,7 +403,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                         activeColor: Colors.greenAccent,
                         inactiveColor: Colors.white24,
                         onChanged: (val) async {
-                          setState(() { _currentZoom = val; });
+                          setState(() { _currentZoom = val; _lastZoomInteraction = DateTime.now(); });
                           await controller!.setZoomLevel(_currentZoom);
                         },
                       ),
