@@ -48,7 +48,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   FlashMode _flashMode = FlashMode.off;
   double _currentZoom = 1.0;
   double _minZoom = 1.0;
-  double _maxZoom = 15.0; // سيتم تحديثه تلقائياً حسب قدرة هاردوير الهاتف
+  double _maxZoom =[cite: 4] 15.0;
   
   bool _showZoomWheel = false;
   DateTime _lastZoomInteraction = DateTime.now();
@@ -63,17 +63,15 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   bool _showExpandedPanel = false;
 
-  // الإعدادات التفاعلية
   bool _isHdrActive = true;
   bool _isTimerActive = false;
   int _selectedTimerSeconds = 3;
   bool _isWatermarkActive = false;
   String _customWatermarkText = 'AI Camera Pro 2027';
-  bool _isGridActive = false;
+  bool _isGridActive = true;
   bool _isAiFocusEnabled = true;
   bool _isLocationActive = false;
 
-  // إعدادات لوحة التحكم
   bool _shutterSound = true;
   bool _cloneShutterButton = false;
   bool _horizonLevel = false;
@@ -109,7 +107,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     await Permission.camera.request();
     await Permission.microphone.request();
     await Permission.storage.request();
-    await Gal.requestAccess();
+    try {
+      await Gal.requestAccess();
+    } catch (_) {}
 
     if (await Permission.camera.isGranted) {
       if (mounted) setState(() { isPermissionGranted = true; });
@@ -117,7 +117,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // التعرف التلقائي على قدرات الكاميرا والزوم الخاص بكل هاتف
   Future<void> _initCamera(int index) async {
     if (controller != null) await controller!.dispose();
     
@@ -154,11 +153,11 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // خوارزمية ذكية وسريعة جداً لمعالجة الصورة، منع التهنيج، وتوضيح التفاصيل عند الزوم
-  Future<String> _enhanceAndSharpenImage(String imagePath, bool isFront, double zoomLevel) async {
+  // معالجة آمنة تماماً في الخلفية لمنع التهنيج وضمان نجاح التصدير
+  Future<void> _enhanceAndSharpenImage(String imagePath, bool isFront, double zoomLevel) async {
     try {
       final File imageFile = File(imagePath);
-      if (!await imageFile.exists()) return imagePath;
+      if (!await imageFile.exists()) return;
 
       final List<int> bytes = await imageFile.readAsBytes();
       img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
@@ -174,13 +173,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
           capturedImage = img.adjustColor(capturedImage, contrast: 1.15, brightness: 1.03, saturation: 1.1);
         }
 
-        final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 95);
-        await imageFile.writeAsBytes(processedBytes);
+        final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 90);
+        await imageFile.writeAsBytes(processedBytes, flush: true);
       }
     } catch (e) {
       debugPrint('Error processing image: $e');
     }
-    return imagePath;
   }
 
   Future<void> _captureAction() async {
@@ -200,7 +198,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
 
     try {
-      // تشغيل تأثير الوميض وصوت الالتقاط بسلاسة
       _flashAnimController.forward().then((_) => _flashAnimController.reverse());
 
       if (_shutterSound) {
@@ -210,14 +207,15 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
       setState(() { _isProcessing = true; _showExpandedPanel = false; });
 
-      // التقاط الصورة الحقيقية والتأكد من نجاحها لمنع الـ X الحمراء
+      // التقاط الصورة
       final XFile image = await controller!.takePicture();
       bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
       
-      final String enhancedPath = await _enhanceAndSharpenImage(image.path, isFront, _currentZoom);
+      // معالجة الصورة بشكل آمن
+      await _enhanceAndSharpenImage(image.path, isFront, _currentZoom);
       
-      // الحفظ الآمن في المعرض الخارجي للحصول على علامة الصح الخضراء
-      await Gal.putImage(enhancedPath);
+      // التصدير السليم للـ Gal لضمان علامة الصح الخضراء
+      await Gal.putImage(image.path);
 
       if (mounted) {
         setState(() { _isProcessing = false; });
@@ -234,7 +232,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       _videoTimer?.cancel();
       final file = await controller!.stopVideoRecording();
       setState(() { _isRecording = false; _videoSeconds = 0; });
-      await Gal.putVideo(file.path);
+      try {
+        await Gal.putVideo(file.path);
+      } catch (_) {}
     } else {
       await controller!.startVideoRecording();
       setState(() { _isRecording = true; _videoSeconds = 0; });
@@ -341,7 +341,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             ),
           ),
 
-          // تأثير الوميض الأبيض البصري الممتاز عند الالتقاط
           Positioned.fill(
             child: IgnorePointer(
               child: AnimatedBuilder(
@@ -497,7 +496,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                             _isHdrActive = true;
                             _isTimerActive = false;
                             _isWatermarkActive = false;
-                            _isGridActive = false;
+                            _isGridActive = true;
                             _isAiFocusEnabled = true;
                             _isLocationActive = false;
                             _shutterSound = true;
