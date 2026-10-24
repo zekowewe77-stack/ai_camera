@@ -48,7 +48,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   FlashMode _flashMode = FlashMode.off;
   double _currentZoom = 1.0;
   double _minZoom = 1.0;
-  double _maxZoom = 15.0; // سيتم تحديثه تلقائياً حسب قدرة هاردوير الهاتف
+  double _maxZoom = 15.0;
   
   bool _showZoomWheel = false;
   DateTime _lastZoomInteraction = DateTime.now();
@@ -63,7 +63,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   bool _showExpandedPanel = false;
 
-  // الإعدادات التفاعلية
   bool _isHdrActive = true;
   bool _isTimerActive = false;
   int _selectedTimerSeconds = 3;
@@ -73,7 +72,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _isAiFocusEnabled = true;
   bool _isLocationActive = false;
 
-  // إعدادات لوحة التحكم
   bool _shutterSound = true;
   bool _cloneShutterButton = false;
   bool _horizonLevel = false;
@@ -117,13 +115,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // التعرف التلقائي على قدرات الكاميرا والزوم الخاص بكل هاتف
   Future<void> _initCamera(int index) async {
     if (controller != null) await controller!.dispose();
     
     controller = CameraController(
       cameras[index],
-      ResolutionPreset.max,
+      ResolutionPreset.max, // أقصى دقة ممكنة للكاميرا بدقة رهيبة
       enableAudio: true,
       imageFormatGroup: ImageFormatGroup.jpeg,
     );
@@ -154,7 +151,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // خوارزمية ذكية وسريعة جداً لمعالجة الصورة، منع التهنيج، وتوضيح التفاصيل عند الزوم
   Future<String> _enhanceAndSharpenImage(String imagePath, bool isFront, double zoomLevel) async {
     try {
       final File imageFile = File(imagePath);
@@ -162,6 +158,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
 
       if (capturedImage != null) {
+        // إذا كانت الكاميرا أمامية، نعكس الصورة نهائياً أثناء الحفظ لتبقى مطابقة للمرآة
         if (isFront) {
           capturedImage = img.flipHorizontal(capturedImage);
         }
@@ -198,7 +195,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
 
     try {
-      // تشغيل تأثير اللقطة والوميض الأبيض البصري فوراً عند الضغط
       _flashAnimController.forward().then((_) => _flashAnimController.reverse());
 
       if (_shutterSound) {
@@ -252,7 +248,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   void dispose() {
     _videoTimer?.cancel();
-    WidgetsBinding.instance.removeObserver(this);
+    WidgetsBinding.instance.addObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
@@ -310,7 +306,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
 
-    // تم ضبط السطر الخاص بعكس معاينة الكاميرا الأمامية لتصبح مرآة (متوافقة مع حركة اليد وأنت باصص لها)
+    // ضبط معاينة الكاميرا الأمامية والخلفية بدقة لتنعكس يمين ويسار بصورة صحيحة
     Widget previewWidget = AspectRatio(
       aspectRatio: _getAspectRatioValue(),
       child: Transform(
@@ -337,7 +333,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             ),
           ),
 
-          // تأثير الوميض الأبيض البصري الممتاز عند الالتقاط
           Positioned.fill(
             child: IgnorePointer(
               child: AnimatedBuilder(
@@ -686,7 +681,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     children: [
                       ListTile(title: const Text('تلقائي', style: TextStyle(color: Colors.white)), onTap: () { setState(() => _fps = 'تلقائي'); _updateParent(); Navigator.pop(context); }),
                       ListTile(title: const Text('50 فريم', style: TextStyle(color: Colors.white)), onTap: () { setState(() => _fps = '50 فريم'); _updateParent(); Navigator.pop(context); }),
-                      ListTile(title: const Text('60 فريم', style: TextStyle(color: Colors.white)), onTap: () { setState(() => _fps = '60 فريم'); _updateParent(); Navigator.pop(context); }),
+                      ListTile(title: const Trial('60 فريم', style: TextStyle(color: Colors.white)), onTap: () { setState(() => _fps = '60 فريم'); _updateParent(); Navigator.pop(context); }),
                     ],
                   ),
                 ),
