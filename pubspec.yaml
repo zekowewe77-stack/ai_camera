@@ -1,29 +1,24 @@
-name: ai_camera_pro
-
-description: AI Camera Pro
-
-publish_to: "none"
+name: ai_camera_pro_2027
+description: "AI Camera Pro 2027 - تطبيق كاميرا ذكي احترافي"
+publish_to: 'none'
 
 version: 1.0.0+1
 
 environment:
-  sdk: ">=3.6.0 <4.0.0"
+  sdk: '>=3.0.0 <4.0.0'
 
 dependencies:
   flutter:
     sdk: flutter
-
-  camera: ^0.12.1
-  gal: ^2.3.3
-  image: ^4.12.0
-  path: ^1.9.1
-  dio: ^5.11.1
+  camera: ^0.10.5+9
+  permission_handler: ^11.3.1
+  gal: ^2.3.0
+  image: ^4.1.7
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-
-  flutter_lints: ^6.0.0
+  flutter_lints: ^3.0.0
 
 flutter:
   uses-material-design: true
