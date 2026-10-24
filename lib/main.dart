@@ -151,34 +151,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  Future<String> _enhanceAndSharpenImage(String imagePath, bool isFront, double zoomLevel) async {
-    try {
-      final File imageFile = File(imagePath);
-      if (!await imageFile.exists()) return imagePath;
-
-      final List<int> bytes = await imageFile.readAsBytes();
-      img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
-
-      if (capturedImage != null) {
-        if (isFront) {
-          capturedImage = img.flipHorizontal(capturedImage);
-        }
-
-        if (zoomLevel > 1.5) {
-          capturedImage = img.adjustColor(capturedImage, contrast: 1.25, brightness: 1.05, saturation: 1.15);
-        } else if (_isHdrActive) {
-          capturedImage = img.adjustColor(capturedImage, contrast: 1.15, brightness: 1.03, saturation: 1.1);
-        }
-
-        final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 90);
-        await imageFile.writeAsBytes(processedBytes, flush: true);
-      }
-    } catch (e) {
-      debugPrint('Error processing image: $e');
-    }
-    return imagePath;
-  }
-
   Future<void> _captureAction() async {
     if (controller == null || !controller!.value.isInitialized || _isProcessing) return;
 
@@ -205,16 +177,33 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
       setState(() { _isProcessing = true; _showExpandedPanel = false; });
 
-      final image = await controller!.takePicture();
+      // التقاط الصورة مباشرة وآمنة 100% بدون أي تداخل في القراءة والكتابة المؤقتة
+      final XFile image = await controller!.takePicture();
       bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
-      
-      final String enhancedPath = await _enhanceAndSharpenImage(image.path, isFront, _currentZoom);
-      
-      // التأكد من جاهزية الملف تماماً قبل إرساله للمعرض الخارجي
-      final File finalFile = File(enhancedPath);
-      if (await finalFile.exists() && await finalFile.length() > 0) {
-        await Gal.putImage(enhancedPath);
+
+      // معالجة خفيفة وآمنة بدون تعطيل مسار الحفظ الخارجي
+      try {
+        final File imageFile = File(image.path);
+        if (await imageFile.exists()) {
+          final List<int> bytes = await imageFile.readAsBytes();
+          img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
+          if (capturedImage != null) {
+            if (isFront) {
+              capturedImage = img.flipHorizontal(capturedImage);
+            }
+            if (_currentZoom > 1.5) {
+              capturedImage = img.adjustColor(capturedImage, contrast: 1.25, brightness: 1.05, saturation: 1.15);
+            }
+            final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 90);
+            await imageFile.writeAsBytes(processedBytes, flush: true);
+          }
+        }
+      } catch (e) {
+        debugPrint('Processing warning: $e');
       }
+
+      // الإرسال الآمن المباشر للمعرض للحصول على الصح الخضراء فوراً
+      await Gal.putImage(image.path);
 
       if (mounted) {
         setState(() { _isProcessing = false; });
