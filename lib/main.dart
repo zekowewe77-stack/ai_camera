@@ -1,19 +1,16 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:isolate';
-import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:gal/gal.dart';
-import 'package:image/image.dart' as img;
-import 'package:path/path.dart' as p;
-
-List<CameraDescription> cameras = [];
+import 'package:permission_handler/permission_handler.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  List<CameraDescription> cameras = [];
 
   try {
     cameras = await availableCameras();
@@ -21,85 +18,96 @@ Future<void> main() async {
     debugPrint('Camera discovery error: $e');
   }
 
-  runApp(const CameraApp());
+  runApp(
+    AICameraApp(cameras: cameras),
+  );
 }
 
-class CameraApp extends StatelessWidget {
-  const CameraApp({super.key});
+class AICameraApp extends StatelessWidget {
+  final List<CameraDescription> cameras;
+
+  const AICameraApp({
+    super.key,
+    required this.cameras,
+  });
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'AI Camera Pro 2027',
-      theme: ThemeData.dark(useMaterial3: true),
-      home: const CameraScreen(),
+      title: 'AI Camera Pro',
+      theme: ThemeData(
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: Colors.black,
+        useMaterial3: true,
+      ),
+      home: CameraPage(cameras: cameras),
     );
   }
 }
 
-class CameraScreen extends StatefulWidget {
-  const CameraScreen({super.key});
-
-  @override
-  State<CameraScreen> createState() => _CameraScreenState();
+enum CameraMode {
+  photo,
+  video,
+  portrait,
 }
 
-class _CameraScreenState extends State<CameraScreen>
-    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
-  CameraController? controller;
+class CameraPage extends StatefulWidget {
+  final List<CameraDescription> cameras;
 
-  int selectedCameraIndex = 0;
+  const CameraPage({
+    super.key,
+    required this.cameras,
+  });
 
-  bool isCameraReady = false;
-  bool isProcessing = false;
-  bool isRecording = false;
+  @override
+  State<CameraPage> createState() => _CameraPageState();
+}
 
-  FlashMode flashMode = FlashMode.off;
+class _CameraPageState extends State<CameraPage>
+    with WidgetsBindingObserver, TickerProviderStateMixin {
+  CameraController? _controller;
 
-  double currentZoom = 1.0;
-  double minZoom = 1.0;
-  double maxZoom = 1.0;
+  int _cameraIndex = 0;
 
-  double startZoom = 1.0;
+  CameraMode _mode = CameraMode.photo;
 
-  String currentMode = 'PHOTO';
+  bool _initializing = true;
+  bool _busy = false;
+  bool _recording = false;
+  bool _grid = false;
 
-  bool showExpandedPanel = false;
-  bool showZoomPanel = false;
+  FlashMode _flashMode = FlashMode.off;
 
-  bool hdrActive = true;
-  bool timerActive = false;
-  int timerSeconds = 3;
+  double _zoom = 1.0;
+  double _minZoom = 1.0;
+  double _maxZoom = 1.0;
 
-  bool watermarkActive = false;
-  String watermarkText = 'AI Camera Pro 2027';
+  double _exposure = 0.0;
 
-  bool gridActive = false;
-  bool aiFocusEnabled = true;
-  bool locationActive = false;
+  Timer? _recordTimer;
+  int _recordSeconds = 0;
 
-  bool shutterSound = true;
-  bool cloneShutterButton = false;
-  bool horizonLevel = false;
-  bool dirtyLensNotice = true;
-  bool qrScannerActive = true;
+  double _zoomStart = 1.0;
 
-  String portraitFps = 'تلقائي';
+  late final AnimationController _captureAnimation;
 
-  String selectedAspectRatio = '4:3';
+  CameraController? get camera => _controller;
 
-  int countdownSeconds = 0;
+  bool get isReady =>
+      camera != null &&
+      camera!.value.isInitialized;
 
-  Timer? videoTimer;
-  int videoSeconds = 0;
+  bool get isFrontCamera {
+    if (widget.cameras.isEmpty) {
+      return false;
+    }
 
-  DateTime lastZoomInteraction = DateTime.now();
-
-  String lastResolution = '';
-  double lastMegapixels = 0;
-
-  late AnimationController flashAnimation;
+    return widget
+            .cameras[_cameraIndex]
+            .lensDirection ==
+        CameraLensDirection.front;
+  }
 
   @override
   void initState() {
@@ -107,67 +115,80 @@ class _CameraScreenState extends State<CameraScreen>
 
     WidgetsBinding.instance.addObserver(this);
 
-    flashAnimation = AnimationController(
+    _captureAnimation = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 130),
+      duration: const Duration(milliseconds: 140),
+      lowerBound: 0,
+      upperBound: 1,
     );
 
-    initializeCamera();
+    _initialize();
   }
 
-  bool get isFrontCamera {
-    if (cameras.isEmpty) {
-      return false;
-    }
+  Future<void> _initialize() async {
+    final cameraPermission =
+        await Permission.camera.request();
 
-    return cameras[selectedCameraIndex].lensDirection ==
-        CameraLensDirection.front;
-  }
-
-  @override
-  void didChangeAppLifecycleState(
-    AppLifecycleState state,
-  ) {
-    if (state == AppLifecycleState.resumed) {
-      initializeCamera();
-      return;
-    }
-
-    if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused) {
-      final oldController = controller;
-
-      controller = null;
-
-      if (oldController != null) {
-        oldController.dispose();
-      }
-
+    if (!cameraPermission.isGranted) {
       if (mounted) {
         setState(() {
-          isCameraReady = false;
+          _initializing = false;
         });
       }
-    }
-  }
 
-  Future<void> initializeCamera() async {
-    if (cameras.isEmpty) {
+      _message(
+        'يجب السماح للتطبيق باستخدام الكاميرا',
+      );
+
       return;
     }
 
-    if (selectedCameraIndex >= cameras.length) {
-      selectedCameraIndex = 0;
+    await Permission.microphone.request();
+
+    try {
+      await Gal.requestAccess();
+    } catch (e) {
+      debugPrint(
+        'Gallery permission error: $e',
+      );
+    }
+
+    if (widget.cameras.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _initializing = false;
+        });
+      }
+
+      _message(
+        'لم يتم العثور على كاميرا في الجهاز',
+      );
+
+      return;
+    }
+
+    await _setupCamera(_cameraIndex);
+  }
+
+  Future<void> _setupCamera(int index) async {
+    if (widget.cameras.isEmpty) {
+      return;
+    }
+
+    if (index < 0 ||
+        index >= widget.cameras.length) {
+      index = 0;
     }
 
     if (mounted) {
       setState(() {
-        isCameraReady = false;
+        _initializing = true;
       });
     }
 
-    final oldController = controller;
-    controller = null;
+    final oldController = _controller;
+
+    _controller = null;
 
     if (oldController != null) {
       try {
@@ -175,100 +196,170 @@ class _CameraScreenState extends State<CameraScreen>
       } catch (_) {}
     }
 
+    final description =
+        widget.cameras[index];
+
     final newController = CameraController(
-      cameras[selectedCameraIndex],
+      description,
       ResolutionPreset.max,
       enableAudio: true,
-      imageFormatGroup: ImageFormatGroup.jpeg,
+      imageFormatGroup:
+          ImageFormatGroup.jpeg,
     );
 
     try {
       await newController.initialize();
 
-      minZoom =
-          await newController.getMinZoomLevel();
-
-      maxZoom =
-          await newController.getMaxZoomLevel();
-
-      if (maxZoom < minZoom) {
-        maxZoom = minZoom;
-      }
-
-      currentZoom =
-          minZoom.clamp(minZoom, maxZoom);
-
-      await newController.setZoomLevel(
-        currentZoom,
-      );
-
       try {
-        await newController.setFlashMode(
-          flashMode,
+        await newController.setFocusMode(
+          FocusMode.auto,
         );
       } catch (_) {}
 
-      controller = newController;
+      try {
+        await newController.setExposureMode(
+          ExposureMode.auto,
+        );
+      } catch (_) {}
 
-      if (mounted) {
-        setState(() {
-          isCameraReady = true;
-        });
+      try {
+        await newController.setFlashMode(
+          _flashMode,
+        );
+      } catch (_) {}
+
+      final minZoom =
+          await newController.getMinZoomLevel();
+
+      final maxZoom =
+          await newController.getMaxZoomLevel();
+
+      _controller = newController;
+      _cameraIndex = index;
+
+      _minZoom =
+          minZoom.isFinite && minZoom > 0
+              ? minZoom
+              : 1.0;
+
+      _maxZoom =
+          maxZoom.isFinite &&
+                  maxZoom >= _minZoom
+              ? maxZoom
+              : _minZoom;
+
+      _zoom = _minZoom;
+
+      await newController.setZoomLevel(
+        _zoom,
+      );
+
+      if (!mounted) {
+        return;
       }
-    } catch (e) {
+
+      setState(() {
+        _initializing = false;
+      });
+    } catch (e, stack) {
       debugPrint(
-        'Camera initialization error: $e',
+        'Camera setup error: $e',
+      );
+
+      debugPrint(
+        stack.toString(),
       );
 
       try {
         await newController.dispose();
       } catch (_) {}
 
+      _controller = null;
+
       if (mounted) {
         setState(() {
-          isCameraReady = false;
+          _initializing = false;
         });
+      }
+
+      _message(
+        'حدث خطأ أثناء تشغيل الكاميرا',
+      );
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(
+    AppLifecycleState state,
+  ) {
+    if (state ==
+            AppLifecycleState.inactive ||
+        state ==
+            AppLifecycleState.paused) {
+      final oldController = _controller;
+
+      _controller = null;
+
+      oldController?.dispose();
+    }
+
+    if (state ==
+        AppLifecycleState.resumed) {
+      if (widget.cameras.isNotEmpty) {
+        _setupCamera(_cameraIndex);
       }
     }
   }
 
-  Future<void> switchCamera() async {
-    if (cameras.length < 2 ||
-        isProcessing ||
-        isRecording) {
+  Future<void> _switchCamera() async {
+    if (_busy || _recording) {
       return;
     }
 
-    selectedCameraIndex =
-        (selectedCameraIndex + 1) % cameras.length;
+    if (widget.cameras.length < 2) {
+      _message(
+        'الجهاز لا يحتوي على كاميرا ثانية',
+      );
 
-    await initializeCamera();
+      return;
+    }
+
+    final nextIndex =
+        (_cameraIndex + 1) %
+            widget.cameras.length;
+
+    await _setupCamera(nextIndex);
   }
 
-  Future<void> setZoom(
+  Future<void> _changeZoom(
     double value,
   ) async {
-    final c = controller;
+    final controller = camera;
 
-    if (c == null ||
-        !c.value.isInitialized) {
+    if (controller == null ||
+        !controller.value.isInitialized ||
+        _recording) {
       return;
     }
 
-    final double zoom =
-        value.clamp(minZoom, maxZoom);
+    final zoom =
+        value.clamp(
+      _minZoom,
+      _maxZoom,
+    );
 
     try {
-      await c.setZoomLevel(zoom);
+      await controller.setZoomLevel(
+        zoom,
+      );
 
-      if (mounted) {
-        setState(() {
-          currentZoom = zoom;
-          showZoomPanel = true;
-          lastZoomInteraction =
-              DateTime.now();
-        });
+      if (!mounted) {
+        return;
       }
+
+      setState(() {
+        _zoom = zoom;
+      });
     } catch (e) {
       debugPrint(
         'Zoom error: $e',
@@ -276,25 +367,68 @@ class _CameraScreenState extends State<CameraScreen>
     }
   }
 
-  Future<void> toggleFlash() async {
-    final c = controller;
+  Future<void> _changeExposure(
+    double value,
+  ) async {
+    final controller = camera;
 
-    if (c == null ||
-        !c.value.isInitialized) {
+    if (controller == null ||
+        !controller.value.isInitialized) {
       return;
     }
 
-    final FlashMode next =
-        flashMode == FlashMode.torch
-            ? FlashMode.off
-            : FlashMode.torch;
-
     try {
-      await c.setFlashMode(next);
+      final min =
+          await controller
+              .getMinExposureOffset();
+
+      final max =
+          await controller
+              .getMaxExposureOffset();
+
+      final exposure =
+          value.clamp(
+        min,
+        max,
+      );
+
+      await controller.setExposureOffset(
+        exposure,
+      );
 
       if (mounted) {
         setState(() {
-          flashMode = next;
+          _exposure = exposure;
+        });
+      }
+    } catch (e) {
+      debugPrint(
+        'Exposure error: $e',
+      );
+    }
+  }
+
+  Future<void> _toggleFlash() async {
+    final controller = camera;
+
+    if (controller == null ||
+        !controller.value.isInitialized) {
+      return;
+    }
+
+    final nextFlash =
+        _flashMode == FlashMode.off
+            ? FlashMode.torch
+            : FlashMode.off;
+
+    try {
+      await controller.setFlashMode(
+        nextFlash,
+      );
+
+      if (mounted) {
+        setState(() {
+          _flashMode = nextFlash;
         });
       }
     } catch (e) {
@@ -304,870 +438,497 @@ class _CameraScreenState extends State<CameraScreen>
     }
   }
 
-  Future<bool> requestGalleryAccess() async {
+  Future<bool> _requestGalleryAccess() async {
     try {
-      final bool hasAccess =
-          await Gal.hasAccess();
-
-      if (hasAccess) {
-        return true;
-      }
-
       return await Gal.requestAccess();
     } catch (e) {
       debugPrint(
-        'Gallery permission error: $e',
+        'Gallery access error: $e',
       );
 
       return false;
     }
   }
 
-  Future<void> capturePhoto() async {
-    final c = controller;
+  Future<void> _takePhoto() async {
+    final controller = camera;
 
-    if (c == null ||
-        !c.value.isInitialized ||
-        isProcessing ||
-        isRecording) {
+    if (controller == null ||
+        !controller.value.isInitialized ||
+        _busy ||
+        _recording) {
       return;
     }
 
-    if (currentMode == 'VIDEO') {
-      await toggleVideoRecording();
-      return;
-    }
-
-    if (timerActive) {
-      if (mounted) {
-        setState(() {
-          countdownSeconds = timerSeconds;
-        });
-      }
-
-      for (
-        int i = timerSeconds;
-        i > 0;
-        i--
-      ) {
-        await Future.delayed(
-          const Duration(seconds: 1),
-        );
-
-        if (!mounted) {
-          return;
-        }
-
-        setState(() {
-          countdownSeconds = i - 1;
-        });
-      }
-    }
+    setState(() {
+      _busy = true;
+    });
 
     try {
-      if (mounted) {
-        setState(() {
-          isProcessing = true;
-          showExpandedPanel = false;
-          showZoomPanel = false;
-        });
-      }
+      HapticFeedback.mediumImpact();
 
-      if (shutterSound) {
-        try {
-          SystemSound.play(
-            SystemSoundType.click,
-          );
-        } catch (_) {}
-
-        HapticFeedback.mediumImpact();
-      }
-
-      flashAnimation.forward(
+      await _captureAnimation.forward(
         from: 0,
       );
 
-      Future.delayed(
-        const Duration(
-          milliseconds: 100,
-        ),
-        () {
-          if (mounted) {
-            flashAnimation.reverse();
-          }
-        },
-      );
+      await _captureAnimation.reverse();
 
-      final XFile photo =
-          await c.takePicture();
+      final XFile image =
+          await controller.takePicture();
 
-      final bool front =
-          isFrontCamera;
+      final imageFile =
+          File(image.path);
 
-      final String outputPath = p.join(
-        File(photo.path).parent.path,
-        'AI_CAMERA_${DateTime.now().millisecondsSinceEpoch}.jpg',
-      );
-
-      final Uint8List inputBytes =
-          await File(photo.path).readAsBytes();
-
-      final ImageProcessRequest request =
-          ImageProcessRequest(
-        inputBytes: inputBytes,
-        outputPath: outputPath,
-        mirrorFront: false,
-        enhance: hdrActive,
-        zoom: currentZoom,
-        addWatermark: watermarkActive,
-        watermarkText: watermarkText,
-      );
-
-      final ImageProcessResult? result =
-          await Isolate.run(
-        () => processImageInBackground(
-          request,
-        ),
-      );
-
-      if (result == null) {
+      if (!await imageFile.exists()) {
         throw Exception(
-          'تعذر تجهيز الصورة',
+          'ملف الصورة غير موجود',
         );
       }
 
-      final bool galleryAccess =
-          await requestGalleryAccess();
+      final length =
+          await imageFile.length();
 
-      if (!galleryAccess) {
+      if (length <= 0) {
         throw Exception(
-          'لم يتم السماح للتطبيق بحفظ الصور في المعرض',
+          'ملف الصورة فارغ',
+        );
+      }
+
+      final access =
+          await _requestGalleryAccess();
+
+      if (!access) {
+        throw Exception(
+          'لم يتم السماح بحفظ الصور',
         );
       }
 
       await Gal.putImage(
-        result.path,
+        image.path,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _busy = false;
+      });
+
+      _message(
+        'تم حفظ الصورة في المعرض',
+      );
+    } catch (e, stack) {
+      debugPrint(
+        'Take photo error: $e',
+      );
+
+      debugPrint(
+        stack.toString(),
       );
 
       if (mounted) {
         setState(() {
-          lastResolution =
-              '${result.width} × ${result.height}';
-
-          lastMegapixels =
-              result.megapixels;
-        });
-
-        ScaffoldMessenger.of(context)
-            .showSnackBar(
-          SnackBar(
-            duration:
-                const Duration(seconds: 2),
-            content: Text(
-              'تم حفظ الصورة • '
-              '${result.width}×${result.height} • '
-              '${result.megapixels.toStringAsFixed(1)} MP',
-            ),
-          ),
-        );
-      }
-
-      try {
-        await File(photo.path).delete();
-      } catch (_) {}
-
-      try {
-        await File(result.path).delete();
-      } catch (_) {}
-    } catch (e, stackTrace) {
-      debugPrint(
-        'Capture error: $e',
-      );
-
-      debugPrint(
-        stackTrace.toString(),
-      );
-
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(
-          SnackBar(
-            duration:
-                const Duration(seconds: 3),
-            content: Text(
-              'خطأ في التصوير: $e',
-            ),
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          isProcessing = false;
-          countdownSeconds = 0;
+          _busy = false;
         });
       }
+
+      _message(
+        'فشل التصوير: $e',
+      );
     }
   }
 
-  Future<void> toggleVideoRecording() async {
-    final c = controller;
+  Future<void> _startRecording() async {
+    final controller = camera;
 
-    if (c == null ||
-        !c.value.isInitialized) {
-      return;
-    }
-
-    if (isProcessing) {
+    if (controller == null ||
+        !controller.value.isInitialized ||
+        _busy ||
+        _recording) {
       return;
     }
 
     try {
-      if (isRecording) {
-        videoTimer?.cancel();
+      await controller.startVideoRecording();
 
-        final XFile video =
-            await c.stopVideoRecording();
-
-        if (mounted) {
-          setState(() {
-            isRecording = false;
-            videoSeconds = 0;
-          });
-        }
-
-        final bool access =
-            await requestGalleryAccess();
-
-        if (!access) {
-          throw Exception(
-            'لم يتم السماح بحفظ الفيديو',
-          );
-        }
-
-        await Gal.putVideo(
-          video.path,
-        );
-
-        if (mounted) {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(
-            const SnackBar(
-              content:
-                  Text('تم حفظ الفيديو في المعرض'),
-            ),
-          );
-        }
-      } else {
-        await c.startVideoRecording();
-
-        if (mounted) {
-          setState(() {
-            isRecording = true;
-            videoSeconds = 0;
-          });
-        }
-
-        videoTimer = Timer.periodic(
-          const Duration(seconds: 1),
-          (_) {
-            if (mounted &&
-                isRecording) {
-              setState(() {
-                videoSeconds++;
-              });
-            }
-          },
-        );
+      if (!mounted) {
+        return;
       }
-    } catch (e) {
+
+      _recordTimer?.cancel();
+
+      setState(() {
+        _recording = true;
+        _recordSeconds = 0;
+      });
+
+      _recordTimer =
+          Timer.periodic(
+        const Duration(seconds: 1),
+        (_) {
+          if (!mounted ||
+              !_recording) {
+            return;
+          }
+
+          setState(() {
+            _recordSeconds++;
+          });
+        },
+      );
+    } catch (e, stack) {
       debugPrint(
-        'Video error: $e',
+        'Start recording error: $e',
       );
 
-      videoTimer?.cancel();
+      debugPrint(
+        stack.toString(),
+      );
 
-      if (mounted) {
-        setState(() {
-          isRecording = false;
-          videoSeconds = 0;
-        });
-
-        ScaffoldMessenger.of(context)
-            .showSnackBar(
-          SnackBar(
-            content: Text(
-              'خطأ في الفيديو: $e',
-            ),
-          ),
-        );
-      }
+      _message(
+        'فشل بدء تسجيل الفيديو',
+      );
     }
   }
 
-  Future<void> openGallery() async {
+  Future<void> _stopRecording() async {
+    final controller = camera;
+
+    if (controller == null ||
+        !controller.value.isInitialized ||
+        !_recording) {
+      return;
+    }
+
+    try {
+      _recordTimer?.cancel();
+
+      final XFile video =
+          await controller.stopVideoRecording();
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _recording = false;
+        _recordSeconds = 0;
+        _busy = true;
+      });
+
+      final access =
+          await _requestGalleryAccess();
+
+      if (!access) {
+        throw Exception(
+          'لم يتم السماح بحفظ الفيديو',
+        );
+      }
+
+      await Gal.putVideo(
+        video.path,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _busy = false;
+      });
+
+      _message(
+        'تم حفظ الفيديو في المعرض',
+      );
+    } catch (e, stack) {
+      debugPrint(
+        'Stop recording error: $e',
+      );
+
+      debugPrint(
+        stack.toString(),
+      );
+
+      if (mounted) {
+        setState(() {
+          _recording = false;
+          _recordSeconds = 0;
+          _busy = false;
+        });
+      }
+
+      _message(
+        'فشل حفظ الفيديو',
+      );
+    }
+  }
+
+  Future<void> _capture() async {
+    if (_mode ==
+        CameraMode.video) {
+      if (_recording) {
+        await _stopRecording();
+      } else {
+        await _startRecording();
+      }
+
+      return;
+    }
+
+    await _takePhoto();
+  }
+
+  Future<void> _focus(
+    Offset position,
+    Size size,
+  ) async {
+    final controller = camera;
+
+    if (controller == null ||
+        !controller.value.isInitialized) {
+      return;
+    }
+
+    final x =
+        (position.dx / size.width)
+            .clamp(0.0, 1.0);
+
+    final y =
+        (position.dy / size.height)
+            .clamp(0.0, 1.0);
+
+    try {
+      await controller.setFocusPoint(
+        Offset(x, y),
+      );
+
+      await controller.setExposurePoint(
+        Offset(x, y),
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _openGallery() async {
     try {
       await Gal.open();
     } catch (e) {
-      debugPrint(
-        'Gallery open error: $e',
+      _message(
+        'تعذر فتح المعرض',
       );
-
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(
-          SnackBar(
-            content: Text(
-              'تعذر فتح المعرض: $e',
-            ),
-          ),
-        );
-      }
     }
   }
 
-  void changeMode(
-    String mode,
-  ) {
-    if (isRecording ||
-        isProcessing) {
+  void _message(String text) {
+    if (!mounted) {
       return;
     }
 
-    setState(() {
-      currentMode = mode;
-    });
-  }
+    ScaffoldMessenger.of(context)
+        .hideCurrentSnackBar();
 
-  void showWatermarkDialog() {
-    final TextEditingController textController =
-        TextEditingController(
-      text: watermarkText,
-    );
-
-    showDialog(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          backgroundColor:
-              const Color(0xFF202020),
-          title: const Text(
-            'العلامة المائية',
-            style: TextStyle(
-              color: Colors.white,
-            ),
-          ),
-          content: TextField(
-            controller: textController,
-            style: const TextStyle(
-              color: Colors.white,
-            ),
-            decoration:
-                const InputDecoration(
-              hintText:
-                  'اكتب النص هنا...',
-              hintStyle:
-                  TextStyle(
-                color: Colors.white54,
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(
-                  dialogContext,
-                );
-              },
-              child: const Text(
-                'إلغاء',
-                style: TextStyle(
-                  color: Colors.redAccent,
-                ),
-              ),
-            ),
-            TextButton(
-              onPressed: () {
-                final String text =
-                    textController.text
-                        .trim();
-
-                setState(() {
-                  watermarkText =
-                      text.isEmpty
-                          ? 'AI Camera Pro 2027'
-                          : text;
-
-                  watermarkActive =
-                      true;
-                });
-
-                Navigator.pop(
-                  dialogContext,
-                );
-              },
-              child: const Text(
-                'حفظ',
-                style: TextStyle(
-                  color:
-                      Colors.greenAccent,
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void showTimerDialog() {
-    showDialog(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          backgroundColor:
-              const Color(0xFF202020),
-          title: const Text(
-            'المؤقت',
-            style: TextStyle(
-              color: Colors.white,
-            ),
-          ),
-          content: Column(
-            mainAxisSize:
-                MainAxisSize.min,
-            children: [
-              timerOption(
-                dialogContext,
-                3,
-              ),
-              timerOption(
-                dialogContext,
-                5,
-              ),
-              timerOption(
-                dialogContext,
-                10,
-              ),
-              ListTile(
-                title: const Text(
-                  'إيقاف المؤقت',
-                  style: TextStyle(
-                    color: Colors.white,
-                  ),
-                ),
-                onTap: () {
-                  setState(() {
-                    timerActive =
-                        false;
-                  });
-
-                  Navigator.pop(
-                    dialogContext,
-                  );
-                },
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget timerOption(
-    BuildContext dialogContext,
-    int seconds,
-  ) {
-    return ListTile(
-      title: Text(
-        '$seconds ثواني',
-        style:
-            const TextStyle(
-          color: Colors.white,
+    ScaffoldMessenger.of(context)
+        .showSnackBar(
+      SnackBar(
+        behavior:
+            SnackBarBehavior.floating,
+        duration:
+            const Duration(seconds: 2),
+        content:
+            Text(
+          text,
+          textDirection:
+              TextDirection.rtl,
         ),
       ),
-      trailing:
-          timerActive &&
-                  timerSeconds ==
-                      seconds
-              ? const Icon(
-                  Icons.check,
-                  color:
-                      Colors.greenAccent,
-                )
-              : null,
-      onTap: () {
-        setState(() {
-          timerSeconds =
-              seconds;
-          timerActive = true;
-        });
-
-        Navigator.pop(
-          dialogContext,
-        );
-      },
     );
   }
 
-  double get selectedAspectRatio {
-    switch (selectedAspectRatioName) {
-      case '16:9':
-        return 16 / 9;
+  String _modeName() {
+    switch (_mode) {
+      case CameraMode.photo:
+        return 'PHOTO';
 
-      case '1:1':
-        return 1;
+      case CameraMode.video:
+        return 'VIDEO';
 
-      case 'Full':
-        return MediaQuery.of(context)
-                .size
-                .width /
-            MediaQuery.of(context)
-                .size
-                .height;
-
-      case '4:3':
-      default:
-        return 4 / 3;
+      case CameraMode.portrait:
+        return 'PORTRAIT';
     }
   }
 
-  String get selectedAspectRatioName =>
-      selectedAspectRatio;
+  String _recordTime() {
+    final minutes =
+        _recordSeconds ~/ 60;
 
-  void cycleAspectRatio() {
-    setState(() {
-      if (selectedAspectRatio ==
-          '4:3') {
-        selectedAspectRatio =
-            '16:9';
-      } else if (selectedAspectRatio ==
-          '16:9') {
-        selectedAspectRatio =
-            '1:1';
-      } else {
-        selectedAspectRatio =
-            '4:3';
-      }
-    });
+    final seconds =
+        _recordSeconds % 60;
+
+    return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
 
-  Widget buildCameraPreview() {
-    final c = controller;
+  Widget _preview() {
+    final controller = camera;
 
-    if (c == null ||
-        !c.value.isInitialized) {
+    if (controller == null ||
+        !controller.value.isInitialized) {
       return const SizedBox();
     }
 
-    final Size screen =
-        MediaQuery.of(context)
-            .size;
+    return LayoutBuilder(
+      builder: (
+        context,
+        constraints,
+      ) {
+        final previewSize =
+            controller.value.previewSize;
 
-    final double screenRatio =
-        screen.width /
-            screen.height;
+        if (previewSize == null) {
+          return CameraPreview(
+            controller,
+          );
+        }
 
-    final double cameraRatio =
-        c.value.aspectRatio;
+        final previewWidth =
+            previewSize.height;
 
-    double scale =
-        cameraRatio /
-            screenRatio;
+        final previewHeight =
+            previewSize.width;
 
-    if (scale < 1) {
-      scale = 1 / scale;
-    }
+        final previewRatio =
+            previewWidth /
+                previewHeight;
 
-    Widget preview =
-        CameraPreview(c);
+        final screenRatio =
+            constraints.maxWidth /
+                constraints.maxHeight;
 
-    // لا نعكس الكاميرا الأمامية.
-    // هذا يمنع مشكلة أن حركة الرأس يمين
-    // تظهر في الصورة كأنها شمال.
-    preview = Center(
-      child: Transform.scale(
-        scale: scale,
-        child: preview,
-      ),
-    );
+        double scale =
+            previewRatio /
+                screenRatio;
 
-    if (selectedAspectRatio ==
-        '1:1') {
-      preview = Center(
-        child: AspectRatio(
-          aspectRatio: 1,
+        if (scale < 1) {
+          scale = 1 / scale;
+        }
+
+        final size =
+            Size(
+          constraints.maxWidth,
+          constraints.maxHeight,
+        );
+
+        return GestureDetector(
+          behavior:
+              HitTestBehavior.opaque,
+          onTapDown:
+              (details) {
+            _focus(
+              details.localPosition,
+              size,
+            );
+          },
+          onScaleStart:
+              (_) {
+            _zoomStart = _zoom;
+          },
+          onScaleUpdate:
+              (details) {
+            if (details.scale == 1) {
+              return;
+            }
+
+            _changeZoom(
+              _zoomStart *
+                  details.scale,
+            );
+          },
           child:
               ClipRect(
-            child: preview,
+            child:
+                Transform.scale(
+              scale: scale,
+              child:
+                  Center(
+                child:
+                    SizedBox(
+                  width:
+                      previewWidth,
+                  height:
+                      previewHeight,
+                  child:
+                      CameraPreview(
+                    controller,
+                  ),
+                ),
+              ),
+            ),
           ),
-        ),
-      );
-    }
-
-    return ClipRect(
-      child: SizedBox.expand(
-        child: preview,
-      ),
+        );
+      },
     );
   }
 
-  Widget buildTopBar() {
-    return Positioned(
-      top: 38,
-      left: 12,
-      right: 12,
-      child: SafeArea(
-        bottom: false,
-        child: Row(
-          mainAxisAlignment:
-              MainAxisAlignment
-                  .spaceBetween,
+  Widget _topBar() {
+    return SafeArea(
+      bottom: false,
+      child:
+          Padding(
+        padding:
+            const EdgeInsets.fromLTRB(
+          16,
+          10,
+          16,
+          0,
+        ),
+        child:
+            Row(
           children: [
-            IconButton(
-              icon: Icon(
-                flashMode ==
-                        FlashMode.torch
-                    ? Icons.flash_on
-                    : Icons.flash_off,
-                color:
-                    Colors.white,
-              ),
-              onPressed:
-                  toggleFlash,
+            _roundButton(
+              Icons.flash_off,
+              _flashMode !=
+                  FlashMode.off,
+              _toggleFlash,
             ),
-
-            GestureDetector(
-              onTap: () {
-                setState(() {
-                  showExpandedPanel =
-                      !showExpandedPanel;
-                });
-              },
-              child:
-                  Container(
-                padding:
-                    const EdgeInsets
-                        .all(7),
-                decoration:
-                    BoxDecoration(
-                  color: Colors
-                      .black
-                      .withOpacity(
-                    0.50,
-                  ),
-                  shape:
-                      BoxShape.circle,
-                ),
-                child:
-                    Icon(
-                  showExpandedPanel
-                      ? Icons
-                          .expand_less
-                      : Icons
-                          .expand_more,
-                  color:
-                      Colors
-                          .greenAccent,
-                  size: 23,
-                ),
-              ),
-            ),
-
-            GestureDetector(
-              onTap: () {
-                setState(() {
-                  aiFocusEnabled =
-                      !aiFocusEnabled;
-                });
-              },
-              child:
-                  Icon(
-                aiFocusEnabled
-                    ? Icons
-                        .auto_awesome
-                    : Icons
-                        .auto_awesome_outlined,
-                color:
-                    aiFocusEnabled
-                        ? Colors
-                            .greenAccent
-                        : Colors.white,
-                size: 24,
-              ),
-            ),
-
-            GestureDetector(
-              onTap:
-                  cycleAspectRatio,
-              child:
-                  Container(
-                padding:
-                    const EdgeInsets
-                        .symmetric(
-                  horizontal: 7,
-                  vertical: 4,
-                ),
-                decoration:
-                    BoxDecoration(
-                  color: Colors
-                      .black
-                      .withOpacity(
-                    0.45,
-                  ),
-                  borderRadius:
-                      BorderRadius
-                          .circular(
-                    6,
+            const Spacer(),
+            Column(
+              children: [
+                const Text(
+                  'AI CAMERA',
+                  style:
+                      TextStyle(
+                    color:
+                        Colors.white,
+                    fontSize:
+                        17,
+                    fontWeight:
+                        FontWeight.w800,
+                    letterSpacing:
+                        2.2,
                   ),
                 ),
-                child:
-                    Text(
-                  selectedAspectRatio,
+                Text(
+                  _modeName(),
                   style:
                       const TextStyle(
                     color:
-                        Colors.white,
+                        Colors.greenAccent,
+                    fontSize:
+                        9,
                     fontWeight:
                         FontWeight.bold,
-                    fontSize: 12,
+                    letterSpacing:
+                        2,
                   ),
                 ),
-              ),
+              ],
             ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget buildExpandedPanel() {
-    if (!showExpandedPanel) {
-      return const SizedBox();
-    }
-
-    return Positioned(
-      top: 95,
-      left: 16,
-      right: 16,
-      child: Container(
-        padding:
-            const EdgeInsets.all(14),
-        decoration:
-            BoxDecoration(
-          color:
-              const Color(0xFF171717)
-                  .withOpacity(
-            0.96,
-          ),
-          borderRadius:
-              BorderRadius.circular(
-            18,
-          ),
-          border:
-              Border.all(
-            color:
-                Colors.white24,
-          ),
-          boxShadow: const [
-            BoxShadow(
-              color:
-                  Colors.black54,
-              blurRadius:
-                  20,
-            ),
-          ],
-        ),
-        child:
-            GridView.count(
-          crossAxisCount: 4,
-          shrinkWrap: true,
-          physics:
-              const NeverScrollableScrollPhysics(),
-          mainAxisSpacing:
-              14,
-          crossAxisSpacing:
-              10,
-          children: [
-            buildMenuOption(
-              Icons.hdr_on,
-              'HDR',
-              hdrActive,
+            const Spacer(),
+            _roundButton(
+              Icons.grid_3x3,
+              _grid,
               () {
                 setState(() {
-                  hdrActive =
-                      !hdrActive;
-                });
-              },
-            ),
-
-            buildMenuOption(
-              Icons.timer_outlined,
-              'المؤقت',
-              timerActive,
-              showTimerDialog,
-            ),
-
-            buildMenuOption(
-              Icons
-                  .branding_watermark_outlined,
-              'علامة مائية',
-              watermarkActive,
-              showWatermarkDialog,
-            ),
-
-            buildMenuOption(
-              Icons.grid_on,
-              'الشبكة',
-              gridActive,
-              () {
-                setState(() {
-                  gridActive =
-                      !gridActive;
-                });
-              },
-            ),
-
-            buildMenuOption(
-              Icons
-                  .center_focus_strong,
-              'تركيز AI',
-              aiFocusEnabled,
-              () {
-                setState(() {
-                  aiFocusEnabled =
-                      !aiFocusEnabled;
-                });
-              },
-            ),
-
-            buildMenuOption(
-              Icons.location_on,
-              'الموقع',
-              locationActive,
-              () {
-                setState(() {
-                  locationActive =
-                      !locationActive;
-                });
-              },
-            ),
-
-            buildMenuOption(
-              Icons.settings_outlined,
-              'الإعدادات',
-              false,
-              openSettings,
-            ),
-
-            buildMenuOption(
-              Icons.tune,
-              'تحسين الصورة',
-              hdrActive,
-              () {
-                setState(() {
-                  hdrActive =
-                      !hdrActive;
+                  _grid = !_grid;
                 });
               },
             ),
@@ -1177,384 +938,402 @@ class _CameraScreenState extends State<CameraScreen>
     );
   }
 
-  Widget buildMenuOption(
+  Widget _roundButton(
     IconData icon,
-    String label,
     bool active,
-    VoidCallback onTap,
+    VoidCallback action,
   ) {
-    return GestureDetector(
-      onTap: onTap,
+    return Material(
+      color:
+          Colors.black.withOpacity(
+        0.45,
+      ),
+      shape:
+          const CircleBorder(),
       child:
-          Container(
-        decoration:
-            BoxDecoration(
-          color:
-              Colors.white
-                  .withOpacity(
-            0.035,
-          ),
-          borderRadius:
-              BorderRadius.circular(
+          InkWell(
+        customBorder:
+            const CircleBorder(),
+        onTap:
+            action,
+        child:
+            Padding(
+          padding:
+              const EdgeInsets.all(
             12,
           ),
-        ),
-        child:
-            Column(
-          mainAxisAlignment:
-              MainAxisAlignment
-                  .center,
-          children: [
-            Icon(
-              icon,
-              color:
-                  active
-                      ? Colors
-                          .greenAccent
-                      : Colors
-                          .white70,
-              size: 23,
-            ),
-            const SizedBox(
-              height: 5,
-            ),
-            Text(
-              label,
-              textAlign:
-                  TextAlign.center,
-              style:
-                  TextStyle(
-                color:
-                    active
-                        ? Colors
-                            .greenAccent
-                        : Colors
-                            .white70,
-                fontSize: 9,
-              ),
-            ),
-          ],
+          child:
+              Icon(
+            icon,
+            color:
+                active
+                    ? Colors.greenAccent
+                    : Colors.white,
+            size:
+                21,
+          ),
         ),
       ),
     );
   }
 
-  Widget buildZoomPanel() {
-    if (!showZoomPanel) {
+  Widget _gridOverlay() {
+    if (!_grid) {
       return const SizedBox();
     }
 
-    return Positioned(
-      left: 25,
-      right: 25,
-      bottom: 205,
+    return IgnorePointer(
       child:
-          Container(
-        padding:
-            const EdgeInsets
-                .symmetric(
-          horizontal: 15,
-          vertical: 7,
-        ),
-        decoration:
-            BoxDecoration(
-          color:
-              Colors.black
-                  .withOpacity(
-            0.82,
-          ),
-          borderRadius:
-              BorderRadius.circular(
-            22,
-          ),
-          border:
-              Border.all(
-            color:
-                Colors.greenAccent
-                    .withOpacity(
-              0.5,
-            ),
-          ),
-        ),
+          CustomPaint(
+        painter:
+            GridPainter(),
         child:
-            Column(
-          mainAxisSize:
-              MainAxisSize.min,
-          children: [
-            Text(
-              '${currentZoom.toStringAsFixed(1)}×',
-              style:
-                  const TextStyle(
-                color:
-                    Colors.greenAccent,
-                fontSize: 17,
-                fontWeight:
-                    FontWeight.bold,
-              ),
-            ),
+            const SizedBox.expand(),
+      ),
+    );
+  }
 
-            Slider(
+  Widget _modeSelector() {
+    return Container(
+      margin:
+          const EdgeInsets.symmetric(
+        horizontal: 22,
+      ),
+      padding:
+          const EdgeInsets.all(
+        5,
+      ),
+      decoration:
+          BoxDecoration(
+        color:
+            Colors.black.withOpacity(
+          0.75,
+        ),
+        borderRadius:
+            BorderRadius.circular(
+          25,
+        ),
+        border:
+            Border.all(
+          color:
+              Colors.white12,
+        ),
+      ),
+      child:
+          Row(
+        children: [
+          _modeButton(
+            CameraMode.video,
+            'VIDEO',
+          ),
+          _modeButton(
+            CameraMode.photo,
+            'PHOTO',
+          ),
+          _modeButton(
+            CameraMode.portrait,
+            'PORTRAIT',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _modeButton(
+    CameraMode mode,
+    String title,
+  ) {
+    final selected =
+        _mode == mode;
+
+    return Expanded(
+      child:
+          GestureDetector(
+        onTap:
+            _recording || _busy
+                ? null
+                : () {
+                    setState(() {
+                      _mode = mode;
+                    });
+                  },
+        child:
+            AnimatedContainer(
+          duration:
+              const Duration(
+            milliseconds: 160,
+          ),
+          padding:
+              const EdgeInsets.symmetric(
+            vertical: 10,
+          ),
+          decoration:
+              BoxDecoration(
+            color:
+                selected
+                    ? Colors.greenAccent
+                        .withOpacity(
+                        0.15,
+                      )
+                    : Colors.transparent,
+            borderRadius:
+                BorderRadius.circular(
+              20,
+            ),
+          ),
+          child:
+              Text(
+            title,
+            textAlign:
+                TextAlign.center,
+            style:
+                TextStyle(
+              color:
+                  selected
+                      ? Colors.greenAccent
+                      : Colors.white60,
+              fontSize:
+                  10,
+              fontWeight:
+                  FontWeight.w800,
+              letterSpacing:
+                  1.1,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _zoomSlider() {
+    if (_maxZoom <= _minZoom) {
+      return const SizedBox();
+    }
+
+    return Padding(
+      padding:
+          const EdgeInsets.symmetric(
+        horizontal: 38,
+      ),
+      child:
+          Row(
+        children: [
+          const Icon(
+            Icons.zoom_out,
+            color:
+                Colors.white70,
+            size:
+                17,
+          ),
+          Expanded(
+            child:
+                Slider(
               value:
-                  currentZoom.clamp(
-                minZoom,
-                maxZoom,
+                  _zoom.clamp(
+                _minZoom,
+                _maxZoom,
               ),
               min:
-                  minZoom,
+                  _minZoom,
               max:
-                  maxZoom,
+                  _maxZoom,
               activeColor:
                   Colors.greenAccent,
               inactiveColor:
                   Colors.white24,
               onChanged:
-                  setZoom,
+                  _changeZoom,
             ),
-
-            Text(
-              'Hardware Zoom • '
-              '${maxZoom.toStringAsFixed(1)}×',
-              style:
-                  const TextStyle(
-                color:
-                    Colors.white54,
-                fontSize: 9,
-              ),
+          ),
+          Text(
+            '${_zoom.toStringAsFixed(1)}x',
+            style:
+                const TextStyle(
+              color:
+                  Colors.white,
+              fontSize:
+                  12,
+              fontWeight:
+                  FontWeight.bold,
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget buildModeSelector() {
-    const modes = [
-      'VIDEO',
-      'PHOTO',
-      'PORTRAIT',
-      'NIGHT',
-    ];
-
-    return SizedBox(
-      height: 32,
+  Widget _exposureSlider() {
+    return Padding(
+      padding:
+          const EdgeInsets.symmetric(
+        horizontal: 65,
+      ),
       child:
           Row(
-        mainAxisAlignment:
-            MainAxisAlignment
-                .center,
-        children:
-            modes.map(
-          (mode) {
-            final bool active =
-                currentMode ==
-                    mode;
-
-            return GestureDetector(
-              onTap: () =>
-                  changeMode(
-                mode,
+        children: [
+          const Icon(
+            Icons.exposure,
+            color:
+                Colors.white60,
+            size:
+                16,
+          ),
+          Expanded(
+            child:
+                Slider(
+              value:
+                  _exposure.clamp(
+                -2.0,
+                2.0,
               ),
-              child:
-                  Padding(
-                padding:
-                    const EdgeInsets
-                        .symmetric(
-                  horizontal: 11,
-                ),
-                child:
-                    Text(
-                  mode,
-                  style:
-                      TextStyle(
-                    color:
-                        active
-                            ? Colors
-                                .greenAccent
-                            : Colors
-                                .white60,
-                    fontWeight:
-                        FontWeight
-                            .bold,
-                    fontSize:
-                        12,
-                  ),
-                ),
-              ),
-            );
-          },
-        ).toList(),
+              min:
+                  -2,
+              max:
+                  2,
+              divisions:
+                  20,
+              activeColor:
+                  Colors.white,
+              inactiveColor:
+                  Colors.white24,
+              onChanged:
+                  _changeExposure,
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget buildBottomControls() {
-    return Positioned(
-      left: 0,
-      right: 0,
-      bottom: 20,
+  Widget _captureButton() {
+    final isVideo =
+        _mode ==
+            CameraMode.video;
+
+    return GestureDetector(
+      onTap:
+          _busy
+              ? null
+              : _capture,
       child:
-          SafeArea(
-        top: false,
+          AnimatedBuilder(
+        animation:
+            _captureAnimation,
+        builder:
+            (context, child) {
+          final scale =
+              1 -
+                  (_captureAnimation
+                          .value *
+                      0.08);
+
+          return Transform.scale(
+            scale:
+                scale,
+            child:
+                Container(
+              width:
+                  82,
+              height:
+                  82,
+              padding:
+                  const EdgeInsets.all(
+                5,
+              ),
+              decoration:
+                  BoxDecoration(
+                shape:
+                    BoxShape.circle,
+                border:
+                    Border.all(
+                  color:
+                      Colors.white,
+                  width:
+                      3,
+                ),
+              ),
+              child:
+                  Container(
+                decoration:
+                    BoxDecoration(
+                  shape:
+                      BoxShape.circle,
+                  color:
+                      isVideo &&
+                              _recording
+                          ? Colors.red
+                          : Colors.white,
+                ),
+                child:
+                    isVideo &&
+                            _recording
+                        ? const Icon(
+                            Icons.stop,
+                            color:
+                                Colors.white,
+                            size:
+                                28,
+                          )
+                        : null,
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _bottomBar() {
+    return SafeArea(
+      top: false,
+      child:
+          Padding(
+        padding:
+            const EdgeInsets.fromLTRB(
+          18,
+          0,
+          18,
+          15,
+        ),
         child:
             Column(
-          mainAxisSize:
-              MainAxisSize.min,
           children: [
-            buildModeSelector(),
+            _modeSelector(),
 
             const SizedBox(
-              height: 12,
+              height:
+                  8,
+            ),
+
+            _zoomSlider(),
+
+            _exposureSlider(),
+
+            const SizedBox(
+              height:
+                  5,
             ),
 
             Row(
               mainAxisAlignment:
                   MainAxisAlignment
-                      .spaceEvenly,
+                      .spaceBetween,
+              crossAxisAlignment:
+                  CrossAxisAlignment.center,
               children: [
-                GestureDetector(
-                  onTap:
-                      isProcessing
-                          ? null
-                          : openGallery,
-                  child:
-                      Container(
-                    width: 47,
-                    height: 47,
-                    decoration:
-                        BoxDecoration(
-                      color:
-                          Colors
-                              .black
-                              .withOpacity(
-                        0.62,
-                      ),
-                      borderRadius:
-                          BorderRadius
-                              .circular(
-                        11,
-                      ),
-                      border:
-                          Border.all(
-                        color:
-                            Colors
-                                .white24,
-                      ),
-                    ),
-                    child:
-                        const Icon(
-                      Icons
-                          .photo_library_outlined,
-                      color:
-                          Colors.white,
-                      size: 23,
-                    ),
-                  ),
+                _bottomButton(
+                  Icons.photo_library_outlined,
+                  _busy
+                      ? null
+                      : _openGallery,
                 ),
-
-                GestureDetector(
-                  onTap:
-                      isProcessing
-                          ? null
-                          : capturePhoto,
-                  child:
-                      Container(
-                    width: 78,
-                    height: 78,
-                    decoration:
-                        BoxDecoration(
-                      shape:
-                          BoxShape.circle,
-                      border:
-                          Border.all(
-                        color:
-                            Colors.white,
-                        width: 3,
-                      ),
-                    ),
-                    child:
-                        Center(
-                      child:
-                          Container(
-                        width: 64,
-                        height: 64,
-                        decoration:
-                            BoxDecoration(
-                          shape:
-                              BoxShape.circle,
-                          color:
-                              currentMode ==
-                                          'VIDEO' &&
-                                      isRecording
-                                  ? Colors
-                                      .red
-                                  : Colors
-                                      .white,
-                        ),
-                        child:
-                            isProcessing
-                                ? const Padding(
-                                    padding:
-                                        EdgeInsets.all(
-                                      19,
-                                    ),
-                                    child:
-                                        CircularProgressIndicator(
-                                      strokeWidth:
-                                          2.5,
-                                      color:
-                                          Colors.black,
-                                    ),
-                                  )
-                                : isRecording
-                                    ? const Icon(
-                                        Icons
-                                            .stop,
-                                        color:
-                                            Colors.white,
-                                        size:
-                                            28,
-                                      )
-                                    : null,
-                      ),
-                    ),
-                  ),
-                ),
-
-                GestureDetector(
-                  onTap:
-                      isProcessing
-                          ? null
-                          : switchCamera,
-                  child:
-                      Container(
-                    width: 47,
-                    height: 47,
-                    decoration:
-                        BoxDecoration(
-                      color:
-                          Colors
-                              .black
-                              .withOpacity(
-                        0.62,
-                      ),
-                      shape:
-                          BoxShape.circle,
-                      border:
-                          Border.all(
-                        color:
-                            Colors
-                                .white24,
-                      ),
-                    ),
-                    child:
-                        const Icon(
-                      Icons
-                          .cameraswitch_outlined,
-                      color:
-                          Colors.white,
-                      size: 25,
-                    ),
-                  ),
+                _captureButton(),
+                _bottomButton(
+                  Icons.cameraswitch_rounded,
+                  _busy ||
+                          _recording
+                      ? null
+                      : _switchCamera,
                 ),
               ],
             ),
@@ -1564,340 +1343,142 @@ class _CameraScreenState extends State<CameraScreen>
     );
   }
 
-  Widget buildOverlayInfo() {
-    if (lastResolution.isEmpty) {
-      return const SizedBox();
-    }
-
-    return Positioned(
-      top: 92,
-      left: 15,
+  Widget _bottomButton(
+    IconData icon,
+    VoidCallback? action,
+  ) {
+    return GestureDetector(
+      onTap:
+          action,
       child:
           Container(
-        padding:
-            const EdgeInsets
-                .symmetric(
-          horizontal: 8,
-          vertical: 4,
-        ),
+        width:
+            52,
+        height:
+            52,
         decoration:
             BoxDecoration(
+          shape:
+              BoxShape.circle,
           color:
-              Colors.black
-                  .withOpacity(
-            0.42,
+              Colors.black.withOpacity(
+            0.55,
           ),
-          borderRadius:
-              BorderRadius.circular(
-            8,
-          ),
-        ),
-        child:
-            Text(
-          '$lastResolution • '
-          '${lastMegapixels.toStringAsFixed(1)} MP',
-          style:
-              const TextStyle(
+          border:
+              Border.all(
             color:
-                Colors.greenAccent,
-            fontSize: 9,
+                Colors.white24,
           ),
         ),
-      ),
-    );
-  }
-
-  Widget buildWatermark() {
-    if (!watermarkActive &&
-        !locationActive) {
-      return const SizedBox();
-    }
-
-    return Positioned(
-      left: 18,
-      bottom: 145,
-      child:
-          Container(
-        padding:
-            const EdgeInsets
-                .symmetric(
-          horizontal: 9,
-          vertical: 5,
-        ),
-        decoration:
-            BoxDecoration(
+        child:
+            Icon(
+          icon,
           color:
-              Colors.black
-                  .withOpacity(
-            0.45,
-          ),
-          borderRadius:
-              BorderRadius.circular(
-            7,
-          ),
-        ),
-        child:
-            Column(
-          crossAxisAlignment:
-              CrossAxisAlignment
-                  .start,
-          children: [
-            if (watermarkActive)
-              Text(
-                watermarkText,
-                style:
-                    const TextStyle(
-                  color:
-                      Colors.white,
-                  fontSize: 10,
-                  fontWeight:
-                      FontWeight.bold,
-                ),
-              ),
-
-            if (locationActive)
-              const Text(
-                '📍 مصر',
-                style:
-                    TextStyle(
-                  color:
-                      Colors.greenAccent,
-                  fontSize: 9,
-                ),
-              ),
-          ],
+              action == null
+                  ? Colors.white24
+                  : Colors.white,
+          size:
+              23,
         ),
       ),
     );
   }
 
-  Widget buildGrid() {
-    if (!gridActive) {
+  Widget _recordingBadge() {
+    if (!_recording) {
       return const SizedBox();
     }
 
-    return Positioned.fill(
+    return SafeArea(
       child:
-          IgnorePointer(
-        child:
-            CustomPaint(
-          painter:
-              GridPainter(),
-        ),
-      ),
-    );
-  }
-
-  Widget buildCountdown() {
-    if (countdownSeconds <= 0) {
-      return const SizedBox();
-    }
-
-    return Positioned.fill(
-      child:
-          IgnorePointer(
-        child:
-            Center(
-          child:
-              Container(
-            padding:
-                const EdgeInsets
-                    .all(
-              20,
-            ),
-            decoration:
-                const BoxDecoration(
-              color:
-                  Colors.black54,
-              shape:
-                  BoxShape.circle,
-            ),
-            child:
-                Text(
-              '$countdownSeconds',
-              style:
-                  const TextStyle(
-                color:
-                    Colors.greenAccent,
-                fontSize: 72,
-                fontWeight:
-                    FontWeight.bold,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget buildRecordingIndicator() {
-    if (!isRecording) {
-      return const SizedBox();
-    }
-
-    final int minutes =
-        videoSeconds ~/ 60;
-
-    final int seconds =
-        videoSeconds % 60;
-
-    final String time =
-        '$minutes:${seconds.toString().padLeft(2, '0')}';
-
-    return Positioned(
-      top: 85,
-      left: 0,
-      right: 0,
-      child:
-          Center(
+          Align(
+        alignment:
+            Alignment.topCenter,
         child:
             Container(
+          margin:
+              const EdgeInsets.only(
+            top: 65,
+          ),
           padding:
-              const EdgeInsets
-                  .symmetric(
+              const EdgeInsets.symmetric(
             horizontal: 13,
-            vertical: 6,
+            vertical: 7,
           ),
           decoration:
               BoxDecoration(
             color:
-                Colors.red
-                    .withOpacity(
-              0.85,
+                Colors.red.withOpacity(
+              0.9,
             ),
             borderRadius:
                 BorderRadius.circular(
-              20,
+              18,
             ),
           ),
           child:
-              Row(
-            mainAxisSize:
-                MainAxisSize.min,
-            children: [
-              const Icon(
-                Icons
-                    .fiber_manual_record,
-                color:
-                    Colors.white,
-                size: 10,
-              ),
-              const SizedBox(
-                width: 6,
-              ),
               Text(
-                time,
-                style:
-                    const TextStyle(
-                  color:
-                      Colors.white,
-                  fontWeight:
-                      FontWeight.bold,
-                ),
-              ),
-            ],
+            '● ${_recordTime()}',
+            style:
+                const TextStyle(
+              color:
+                  Colors.white,
+              fontSize:
+                  12,
+              fontWeight:
+                  FontWeight.bold,
+            ),
           ),
         ),
       ),
     );
   }
 
-  void openSettings() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder:
-            (_) => SettingsScreen(
-          shutterSound:
-              shutterSound,
-          cloneShutterButton:
-              cloneShutterButton,
-          horizonLevel:
-              horizonLevel,
-          dirtyLensNotice:
-              dirtyLensNotice,
-          portraitFps:
-              portraitFps,
-          qrScannerActive:
-              qrScannerActive,
-          onUpdate: (
-            sound,
-            clone,
-            horizon,
-            lens,
-            fps,
-            qr,
-          ) {
-            setState(() {
-              shutterSound =
-                  sound;
-              cloneShutterButton =
-                  clone;
-              horizonLevel =
-                  horizon;
-              dirtyLensNotice =
-                  lens;
-              portraitFps =
-                  fps;
-              qrScannerActive =
-                  qr;
-            });
-          },
-          onReset: resetSettings,
+  Widget _busyOverlay() {
+    if (!_busy) {
+      return const SizedBox();
+    }
+
+    return Container(
+      color:
+          Colors.black.withOpacity(
+        0.18,
+      ),
+      child:
+          const Center(
+        child:
+            SizedBox(
+          width:
+              36,
+          height:
+              36,
+          child:
+              CircularProgressIndicator(
+            strokeWidth:
+                2.5,
+            color:
+                Colors.greenAccent,
+          ),
         ),
       ),
     );
-  }
-
-  void resetSettings() {
-    setState(() {
-      hdrActive = true;
-      timerActive = false;
-      timerSeconds = 3;
-
-      watermarkActive =
-          false;
-
-      gridActive = false;
-
-      aiFocusEnabled =
-          true;
-
-      locationActive =
-          false;
-
-      shutterSound = true;
-
-      cloneShutterButton =
-          false;
-
-      horizonLevel = false;
-
-      dirtyLensNotice =
-          true;
-
-      portraitFps =
-          'تلقائي';
-
-      qrScannerActive =
-          true;
-    });
   }
 
   @override
   Widget build(
     BuildContext context,
   ) {
-    if (cameras.isEmpty) {
+    if (_initializing ||
+        !isReady) {
       return const Scaffold(
         backgroundColor:
             Colors.black,
-        body: Center(
-          child: Text(
-            'لم يتم العثور على كاميرا',
-            style: TextStyle(
-              color: Colors.white,
-            ),
+        body:
+            Center(
+          child:
+              CircularProgressIndicator(
+            color:
+                Colors.greenAccent,
           ),
         ),
       );
@@ -1906,135 +1487,81 @@ class _CameraScreenState extends State<CameraScreen>
     return Scaffold(
       backgroundColor:
           Colors.black,
-      body: Stack(
-        fit: StackFit.expand,
+      body:
+          Stack(
+        fit:
+            StackFit.expand,
         children: [
-          if (isCameraReady)
-            GestureDetector(
-              onScaleStart:
-                  (_) {
-                startZoom =
-                    currentZoom;
+          _preview(),
 
-                setState(() {
-                  showZoomPanel =
-                      true;
+          _gridOverlay(),
 
-                  showExpandedPanel =
-                      false;
-                });
-              },
-              onScaleUpdate:
-                  (details) {
-                if (details.scale ==
-                    1) {
-                  return;
-                }
+          _topBar(),
 
-                final double next =
-                    startZoom *
-                        details.scale;
+          _recordingBadge(),
 
-                setZoom(next);
-              },
-              child:
-                  buildCameraPreview(),
-            ),
-
-          if (!isCameraReady)
-            const Center(
-              child:
-                  CircularProgressIndicator(
-                color:
-                    Colors.greenAccent,
-              ),
-            ),
-
-          buildGrid(),
-
-          buildCountdown(),
-
-          buildWatermark(),
-
-          buildOverlayInfo(),
-
-          buildRecordingIndicator(),
-
-          buildTopBar(),
-
-          buildExpandedPanel(),
-
-          buildZoomPanel(),
-
-          buildBottomControls(),
-
-          if (isProcessing)
-            Positioned(
+          if (_mode ==
+              CameraMode.portrait)
+            const Positioned(
+              top: 108,
               left: 0,
               right: 0,
-              bottom: 155,
               child:
                   Center(
                 child:
-                    Container(
-                  padding:
-                      const EdgeInsets
-                          .symmetric(
-                    horizontal: 13,
-                    vertical: 7,
-                  ),
-                  decoration:
-                      BoxDecoration(
+                    Text(
+                  'PORTRAIT',
+                  style:
+                      TextStyle(
                     color:
-                        Colors.black
-                            .withOpacity(
-                      0.70,
-                    ),
-                    borderRadius:
-                        BorderRadius
-                            .circular(
-                      20,
-                    ),
-                  ),
-                  child:
-                      const Text(
-                    'جاري حفظ الصورة...',
-                    style:
-                        TextStyle(
-                      color:
-                          Colors.white,
-                      fontSize:
-                          11,
-                    ),
+                        Colors.greenAccent,
+                    fontSize:
+                        10,
+                    fontWeight:
+                        FontWeight.bold,
+                    letterSpacing:
+                        2,
                   ),
                 ),
               ),
             ),
 
-          if (lastResolution.isNotEmpty)
-            Positioned(
-              right: 12,
-              top: 92,
-              child:
-                  GestureDetector(
-                onTap: () {
-                  setState(() {
-                    lastResolution =
-                        '';
-                    lastMegapixels =
-                        0;
-                  });
-                },
-                child:
-                    const Icon(
-                  Icons
-                      .check_circle,
-                  color:
-                      Colors.greenAccent,
-                  size: 17,
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child:
+                Container(
+              height:
+                  285,
+              decoration:
+                  const BoxDecoration(
+                gradient:
+                    LinearGradient(
+                  begin:
+                      Alignment.topCenter,
+                  end:
+                      Alignment.bottomCenter,
+                  colors: [
+                    Colors.transparent,
+                    Color(
+                      0xE6000000,
+                    ),
+                  ],
                 ),
               ),
             ),
+          ),
+
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child:
+                _bottomBar(),
+          ),
+
+          _busyOverlay(),
         ],
       ),
     );
@@ -2042,257 +1569,41 @@ class _CameraScreenState extends State<CameraScreen>
 
   @override
   void dispose() {
-    videoTimer?.cancel();
+    _recordTimer?.cancel();
 
     WidgetsBinding.instance
         .removeObserver(this);
 
-    flashAnimation.dispose();
+    _captureAnimation.dispose();
 
-    final c = controller;
+    final oldController =
+        _controller;
 
-    controller = null;
+    _controller = null;
 
-    if (c != null) {
-      c.dispose();
-    }
+    oldController?.dispose();
 
     super.dispose();
   }
 }
 
-class ImageProcessRequest {
-  final Uint8List inputBytes;
-  final String outputPath;
-  final bool mirrorFront;
-  final bool enhance;
-  final double zoom;
-  final bool addWatermark;
-  final String watermarkText;
-
-  const ImageProcessRequest({
-    required this.inputBytes,
-    required this.outputPath,
-    required this.mirrorFront,
-    required this.enhance,
-    required this.zoom,
-    required this.addWatermark,
-    required this.watermarkText,
-  });
-}
-
-class ImageProcessResult {
-  final String path;
-  final int width;
-  final int height;
-
-  const ImageProcessResult({
-    required this.path,
-    required this.width,
-    required this.height,
-  });
-
-  double get megapixels =>
-      (width * height) / 1000000;
-}
-
-ImageProcessResult?
-    processImageInBackground(
-  ImageProcessRequest request,
-) {
-  try {
-    img.Image? image =
-        img.decodeJpg(
-      request.inputBytes,
-    );
-
-    if (image == null) {
-      return null;
-    }
-
-    // تصحيح اتجاه الصورة من Metadata
-    image =
-        img.bakeOrientation(
-      image,
-    );
-
-    // مهم:
-    // لا نعكس الصورة الأمامية.
-    //
-    // الكاميرا في النسخة القديمة كانت
-    // تقلب الـPreview ثم تقلب الصورة
-    // مرة أخرى، وده سبب مشكلة اتجاه الرأس.
-    //
-    // الآن الصورة النهائية تظل بنفس
-    // اتجاه الحركة الطبيعي.
-    if (request.mirrorFront) {
-      // متعمد تركها بدون flip.
-    }
-
-    if (request.enhance) {
-      final double contrast =
-          request.zoom >= 2.0
-              ? 1.10
-              : 1.07;
-
-      final double saturation =
-          request.zoom >= 2.0
-              ? 1.08
-              : 1.05;
-
-      final double brightness =
-          1.01;
-
-      image =
-          img.adjustColor(
-        image,
-        brightness:
-            brightness,
-        contrast:
-            contrast,
-        saturation:
-            saturation,
-      );
-
-      // Sharpen محسوب وليس مبالغًا فيه
-      final double sharpenAmount =
-          request.zoom >= 3.0
-              ? 0.35
-              : 0.25;
-
-      image =
-          img.convolution(
-        image,
-        filter:
-            const [
-          0,
-          -1,
-          0,
-          -1,
-          5,
-          -1,
-          0,
-          -1,
-          0,
-        ],
-        amount:
-            sharpenAmount,
-      );
-    }
-
-    // العلامة المائية
-    if (request.addWatermark &&
-        request.watermarkText
-            .trim()
-            .isNotEmpty) {
-      image =
-          addSimpleWatermark(
-        image,
-        request.watermarkText,
-      );
-    }
-
-    final List<int>
-        encoded =
-        img.encodeJpg(
-      image,
-      quality: 98,
-    );
-
-    final File output =
-        File(
-      request.outputPath,
-    );
-
-    output.writeAsBytesSync(
-      encoded,
-      flush: true,
-    );
-
-    return ImageProcessResult(
-      path:
-          output.path,
-      width:
-          image.width,
-      height:
-          image.height,
-    );
-  } catch (e) {
-    debugPrint(
-      'Image processing error: $e',
-    );
-
-    return null;
-  }
-}
-
-img.Image addSimpleWatermark(
-  img.Image source,
-  String text,
-) {
-  try {
-    final img.Image result =
-        img.Image.from(
-      source,
-    );
-
-    final int padding =
-        (result.width * 0.025)
-            .round()
-            .clamp(
-              8,
-              40,
-            );
-
-    final int fontSize =
-        (result.width * 0.018)
-            .round()
-            .clamp(
-              12,
-              32,
-            );
-
-    img.drawString(
-      result,
-      text,
-      font:
-          img.arial24,
-      x: padding,
-      y:
-          result.height -
-              padding -
-              fontSize,
-      color:
-          img.ColorRgb8(
-        255,
-        255,
-        255,
-      ),
-    );
-
-    return result;
-  } catch (_) {
-    return source;
-  }
-}
-
-class GridPainter
-    extends CustomPainter {
+class GridPainter extends CustomPainter {
   @override
   void paint(
     Canvas canvas,
     Size size,
   ) {
-    final Paint paint =
+    final paint =
         Paint()
           ..color =
               Colors.white24
-          ..strokeWidth = 1;
+          ..strokeWidth =
+              0.8;
 
-    final double thirdWidth =
+    final thirdWidth =
         size.width / 3;
 
-    final double thirdHeight =
+    final thirdHeight =
         size.height / 3;
 
     canvas.drawLine(
@@ -2349,446 +1660,5 @@ class GridPainter
     covariant CustomPainter oldDelegate,
   ) {
     return false;
-  }
-}
-
-class SettingsScreen
-    extends StatefulWidget {
-  final bool shutterSound;
-  final bool cloneShutterButton;
-  final bool horizonLevel;
-  final bool dirtyLensNotice;
-  final String portraitFps;
-  final bool qrScannerActive;
-
-  final Function(
-    bool,
-    bool,
-    bool,
-    bool,
-    String,
-    bool,
-  ) onUpdate;
-
-  final VoidCallback onReset;
-
-  const SettingsScreen({
-    super.key,
-    required this.shutterSound,
-    required this.cloneShutterButton,
-    required this.horizonLevel,
-    required this.dirtyLensNotice,
-    required this.portraitFps,
-    required this.qrScannerActive,
-    required this.onUpdate,
-    required this.onReset,
-  });
-
-  @override
-  State<SettingsScreen>
-      createState() =>
-          _SettingsScreenState();
-}
-
-class _SettingsScreenState
-    extends State<
-        SettingsScreen> {
-  late bool sound;
-  late bool clone;
-  late bool horizon;
-  late bool lens;
-  late String fps;
-  late bool qr;
-
-  @override
-  void initState() {
-    super.initState();
-
-    sound =
-        widget.shutterSound;
-
-    clone =
-        widget.cloneShutterButton;
-
-    horizon =
-        widget.horizonLevel;
-
-    lens =
-        widget.dirtyLensNotice;
-
-    fps =
-        widget.portraitFps;
-
-    qr =
-        widget.qrScannerActive;
-  }
-
-  void updateParent() {
-    widget.onUpdate(
-      sound,
-      clone,
-      horizon,
-      lens,
-      fps,
-      qr,
-    );
-  }
-
-  void choosePortraitFps() {
-    showDialog(
-      context: context,
-      builder:
-          (dialogContext) {
-        return AlertDialog(
-          backgroundColor:
-              const Color(
-            0xFF202020,
-          ),
-          title:
-              const Text(
-            'محسن بورتريه AI',
-            style:
-                TextStyle(
-              color:
-                  Colors.white,
-            ),
-          ),
-          content:
-              Column(
-            mainAxisSize:
-                MainAxisSize.min,
-            children: [
-              fpsOption(
-                dialogContext,
-                'تلقائي',
-              ),
-              fpsOption(
-                dialogContext,
-                '50 فريم',
-              ),
-              fpsOption(
-                dialogContext,
-                '60 فريم',
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget fpsOption(
-    BuildContext dialogContext,
-    String value,
-  ) {
-    return ListTile(
-      title:
-          Text(
-        value,
-        style:
-            const TextStyle(
-          color:
-              Colors.white,
-        ),
-      ),
-      trailing:
-          fps == value
-              ? const Icon(
-                  Icons.check,
-                  color:
-                      Colors.greenAccent,
-                )
-              : null,
-      onTap: () {
-        setState(() {
-          fps =
-              value;
-        });
-
-        updateParent();
-
-        Navigator.pop(
-          dialogContext,
-        );
-      },
-    );
-  }
-
-  @override
-  Widget build(
-    BuildContext context,
-  ) {
-    return Scaffold(
-      backgroundColor:
-          Colors.black,
-      appBar:
-          AppBar(
-        backgroundColor:
-            Colors.black,
-        title:
-            const Text(
-          'الإعدادات',
-          style:
-              TextStyle(
-            color:
-                Colors.white,
-          ),
-        ),
-        leading:
-            IconButton(
-          icon:
-              const Icon(
-            Icons.arrow_forward,
-            color:
-                Colors.greenAccent,
-          ),
-          onPressed:
-              () {
-            Navigator.pop(
-              context,
-            );
-          },
-        ),
-      ),
-      body:
-          ListView(
-        padding:
-            const EdgeInsets.all(
-          14,
-        ),
-        children: [
-          const Padding(
-            padding:
-                EdgeInsets.only(
-              bottom: 8,
-            ),
-            child:
-                Text(
-              'إعدادات التصوير',
-              style:
-                  TextStyle(
-                color:
-                    Colors.greenAccent,
-                fontSize:
-                    16,
-                fontWeight:
-                    FontWeight.bold,
-              ),
-            ),
-          ),
-
-          SwitchListTile(
-            title:
-                const Text(
-              'صوت الالتقاط',
-              style:
-                  TextStyle(
-                color:
-                    Colors.white,
-              ),
-            ),
-            value:
-                sound,
-            activeColor:
-                Colors.greenAccent,
-            onChanged:
-                (value) {
-              setState(() {
-                sound =
-                    value;
-              });
-
-              updateParent();
-            },
-          ),
-
-          SwitchListTile(
-            title:
-                const Text(
-              'استنساخ زر الالتقاط',
-              style:
-                  TextStyle(
-                color:
-                    Colors.white,
-              ),
-            ),
-            value:
-                clone,
-            activeColor:
-                Colors.greenAccent,
-            onChanged:
-                (value) {
-              setState(() {
-                clone =
-                    value;
-              });
-
-              updateParent();
-            },
-          ),
-
-          SwitchListTile(
-            title:
-                const Text(
-              'المستوى الأفقي',
-              style:
-                  TextStyle(
-                color:
-                    Colors.white,
-              ),
-            ),
-            value:
-                horizon,
-            activeColor:
-                Colors.greenAccent,
-            onChanged:
-                (value) {
-              setState(() {
-                horizon =
-                    value;
-              });
-
-              updateParent();
-            },
-          ),
-
-          ListTile(
-            title:
-                const Text(
-              'محسن بورتريه AI',
-              style:
-                  TextStyle(
-                color:
-                    Colors.white,
-              ),
-            ),
-            subtitle:
-                Text(
-              fps,
-              style:
-                  const TextStyle(
-                color:
-                    Colors.greenAccent,
-              ),
-            ),
-            trailing:
-                const Icon(
-              Icons
-                  .arrow_back_ios,
-              size: 14,
-              color:
-                  Colors.white54,
-            ),
-            onTap:
-                choosePortraitFps,
-          ),
-
-          SwitchListTile(
-            title:
-                const Text(
-              'مسح رموز QR',
-              style:
-                  TextStyle(
-                color:
-                    Colors.white,
-              ),
-            ),
-            value:
-                qr,
-            activeColor:
-                Colors.greenAccent,
-            onChanged:
-                (value) {
-              setState(() {
-                qr =
-                    value;
-              });
-
-              updateParent();
-            },
-          ),
-
-          SwitchListTile(
-            title:
-                const Text(
-              'الإشعار بالعدسات المتسخة',
-              style:
-                  TextStyle(
-                color:
-                    Colors.white,
-              ),
-            ),
-            value:
-                lens,
-            activeColor:
-                Colors.greenAccent,
-            onChanged:
-                (value) {
-              setState(() {
-                lens =
-                    value;
-              });
-
-              updateParent();
-            },
-          ),
-
-          const Divider(
-            color:
-                Colors.white24,
-          ),
-
-          ListTile(
-            leading:
-                const Icon(
-              Icons.refresh,
-              color:
-                  Colors.redAccent,
-            ),
-            title:
-                const Text(
-              'استعادة الإعدادات الافتراضية',
-              style:
-                  TextStyle(
-                color:
-                    Colors.redAccent,
-                fontWeight:
-                    FontWeight.bold,
-              ),
-            ),
-            onTap:
-                () {
-              widget.onReset();
-
-              setState(() {
-                sound =
-                    true;
-                clone =
-                    false;
-                horizon =
-                    false;
-                lens =
-                    true;
-                fps =
-                    'تلقائي';
-                qr =
-                    true;
-              });
-
-              ScaffoldMessenger
-                  .of(context)
-                  .showSnackBar(
-                const SnackBar(
-                  content:
-                      Text(
-                    'تمت استعادة الإعدادات الافتراضية',
-                  ),
-                ),
-              );
-            },
-          ),
-        ],
-      ),
-    );
   }
 }
