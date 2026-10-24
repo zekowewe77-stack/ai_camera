@@ -120,7 +120,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     
     controller = CameraController(
       cameras[index],
-      ResolutionPreset.max, // أقصى دقة ممكنة للكاميرا بدقة رهيبة
+      ResolutionPreset.high,
       enableAudio: true,
       imageFormatGroup: ImageFormatGroup.jpeg,
     );
@@ -154,11 +154,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   Future<String> _enhanceAndSharpenImage(String imagePath, bool isFront, double zoomLevel) async {
     try {
       final File imageFile = File(imagePath);
+      if (!await imageFile.exists()) return imagePath;
+
       final List<int> bytes = await imageFile.readAsBytes();
       img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
 
       if (capturedImage != null) {
-        // إذا كانت الكاميرا أمامية، نعكس الصورة نهائياً أثناء الحفظ لتبقى مطابقة للمرآة
         if (isFront) {
           capturedImage = img.flipHorizontal(capturedImage);
         }
@@ -169,8 +170,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
           capturedImage = img.adjustColor(capturedImage, contrast: 1.15, brightness: 1.03, saturation: 1.1);
         }
 
-        final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 95);
-        await imageFile.writeAsBytes(processedBytes);
+        final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 90);
+        await imageFile.writeAsBytes(processedBytes, flush: true);
       }
     } catch (e) {
       debugPrint('Error processing image: $e');
@@ -208,7 +209,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
       
       final String enhancedPath = await _enhanceAndSharpenImage(image.path, isFront, _currentZoom);
-      await Gal.putImage(enhancedPath);
+      
+      // التأكد من جاهزية الملف تماماً قبل إرساله للمعرض الخارجي
+      final File finalFile = File(enhancedPath);
+      if (await finalFile.exists() && await finalFile.length() > 0) {
+        await Gal.putImage(enhancedPath);
+      }
 
       if (mounted) {
         setState(() { _isProcessing = false; });
@@ -248,7 +254,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   void dispose() {
     _videoTimer?.cancel();
-    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.removeObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
@@ -306,7 +312,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
 
-    // ضبط معاينة الكاميرا الأمامية والخلفية بدقة لتنعكس يمين ويسار بصورة صحيحة
     Widget previewWidget = AspectRatio(
       aspectRatio: _getAspectRatioValue(),
       child: Transform(
@@ -681,7 +686,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     children: [
                       ListTile(title: const Text('تلقائي', style: TextStyle(color: Colors.white)), onTap: () { setState(() => _fps = 'تلقائي'); _updateParent(); Navigator.pop(context); }),
                       ListTile(title: const Text('50 فريم', style: TextStyle(color: Colors.white)), onTap: () { setState(() => _fps = '50 فريم'); _updateParent(); Navigator.pop(context); }),
-                      ListTile(title: const Trial('60 فريم', style: TextStyle(color: Colors.white)), onTap: () { setState(() => _fps = '60 فريم'); _updateParent(); Navigator.pop(context); }),
+                      ListTile(title: const Text('60 فريم', style: TextStyle(color: Colors.white)), onTap: () { setState(() => _fps = '60 فريم'); _updateParent(); Navigator.pop(context); }),
                     ],
                   ),
                 ),
