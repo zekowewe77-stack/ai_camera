@@ -48,7 +48,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   FlashMode _flashMode = FlashMode.off;
   double _currentZoom = 1.0;
   double _minZoom = 1.0;
-  double _maxZoom =[cite: 4] 15.0;
+  double _maxZoom = 15.0;
   
   bool _showZoomWheel = false;
   DateTime _lastZoomInteraction = DateTime.now();
@@ -63,6 +63,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   bool _showExpandedPanel = false;
 
+  // الإعدادات التفاعلية
   bool _isHdrActive = true;
   bool _isTimerActive = false;
   int _selectedTimerSeconds = 3;
@@ -72,6 +73,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _isAiFocusEnabled = true;
   bool _isLocationActive = false;
 
+  // إعدادات لوحة التحكم
   bool _shutterSound = true;
   bool _cloneShutterButton = false;
   bool _horizonLevel = false;
@@ -153,34 +155,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // معالجة آمنة تماماً في الخلفية لمنع التهنيج وضمان نجاح التصدير
-  Future<void> _enhanceAndSharpenImage(String imagePath, bool isFront, double zoomLevel) async {
-    try {
-      final File imageFile = File(imagePath);
-      if (!await imageFile.exists()) return;
-
-      final List<int> bytes = await imageFile.readAsBytes();
-      img.Image? capturedImage = img.decodeJpg(Uint8List.fromList(bytes));
-
-      if (capturedImage != null) {
-        if (isFront) {
-          capturedImage = img.flipHorizontal(capturedImage);
-        }
-
-        if (zoomLevel > 1.5) {
-          capturedImage = img.adjustColor(capturedImage, contrast: 1.25, brightness: 1.05, saturation: 1.15);
-        } else if (_isHdrActive) {
-          capturedImage = img.adjustColor(capturedImage, contrast: 1.15, brightness: 1.03, saturation: 1.1);
-        }
-
-        final List<int> processedBytes = img.encodeJpg(capturedImage, quality: 90);
-        await imageFile.writeAsBytes(processedBytes, flush: true);
-      }
-    } catch (e) {
-      debugPrint('Error processing image: $e');
-    }
-  }
-
   Future<void> _captureAction() async {
     if (controller == null || !controller!.value.isInitialized || _isProcessing) return;
 
@@ -207,14 +181,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
       setState(() { _isProcessing = true; _showExpandedPanel = false; });
 
-      // التقاط الصورة
       final XFile image = await controller!.takePicture();
-      bool isFront = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
       
-      // معالجة الصورة بشكل آمن
-      await _enhanceAndSharpenImage(image.path, isFront, _currentZoom);
-      
-      // التصدير السليم للـ Gal لضمان علامة الصح الخضراء
+      // حفظ الصورة في المعرض مباشرة بدون عكس الملف النهائي، لتبقى الصورة الطبيعية عدلة
       await Gal.putImage(image.path);
 
       if (mounted) {
@@ -257,7 +226,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   void dispose() {
     _videoTimer?.cancel();
-    WidgetsBinding.instance.removeObserver(this);
+    WidgetsBinding.instance.addObserver(this);
     _flashAnimController.dispose();
     controller?.dispose();
     super.dispose();
@@ -315,6 +284,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     bool isFrontCamera = cameras[selectedCameraIndex].lensDirection == CameraLensDirection.front;
 
+    // تعديل معاينة الكاميرا الأمامية فقط لتكون مرآة (متوافقة مع حركة اليد وأنت باصص لها)
     Widget previewWidget = AspectRatio(
       aspectRatio: _getAspectRatioValue(),
       child: Transform(
@@ -341,6 +311,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             ),
           ),
 
+          // تأثير الوميض الأبيض البصري عند الالتقاط
           Positioned.fill(
             child: IgnorePointer(
               child: AnimatedBuilder(
