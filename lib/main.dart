@@ -1,3 +1,4 @@
+
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
@@ -12,36 +13,47 @@ import 'package:image/image.dart' as img;
 import 'package:open_filex/open_filex.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-List<CameraDescription> cameras = [];
-
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  List<CameraDescription> available = [];
   try {
-    cameras = await availableCameras();
+    available = await availableCameras();
   } catch (e) {
-    debugPrint('$e');
+    debugPrint('Camera discovery failed: $e');
   }
 
-  runApp(const CameraApp());
+  runApp(CameraApp(cameras: available));
 }
 
 class CameraApp extends StatelessWidget {
-  const CameraApp({super.key});
+  const CameraApp({super.key, required this.cameras});
+
+  final List<CameraDescription> cameras;
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'كاميرا AI Pro',
-      theme: ThemeData.dark(useMaterial3: true),
-      home: const CameraScreen(),
+      title: 'AI Camera Pro',
+      theme: ThemeData(
+        brightness: Brightness.dark,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.greenAccent,
+          brightness: Brightness.dark,
+        ),
+        scaffoldBackgroundColor: Colors.black,
+        useMaterial3: true,
+      ),
+      home: CameraScreen(cameras: cameras),
     );
   }
 }
 
 class CameraScreen extends StatefulWidget {
-  const CameraScreen({super.key});
+  const CameraScreen({super.key, required this.cameras});
+
+  final List<CameraDescription> cameras;
 
   @override
   State<CameraScreen> createState() => _CameraScreenState();
@@ -50,16 +62,13 @@ class CameraScreen extends StatefulWidget {
 class _CameraScreenState extends State<CameraScreen>
     with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   CameraController? _camera;
-
   int _cameraIndex = 0;
 
   String _mode = 'PHOTO';
   String _aspect = '4:3';
 
-  String _qualityLabel = '1080p • 30 إطار';
-  ResolutionPreset _videoPreset = ResolutionPreset.veryHigh;
-
-  final int _fps = 30;
+  ResolutionPreset _videoPreset = ResolutionPreset.high;
+  String _qualityLabel = 'جودة عالية';
 
   double _zoom = 1;
   double _minZoom = 1;
@@ -71,121 +80,144 @@ class _CameraScreenState extends State<CameraScreen>
   bool _permission = false;
   bool _busy = false;
   bool _recording = false;
-
   bool _grid = false;
-  bool _hdr = true;
-  bool _sound = true;
   bool _timerOn = false;
+  bool _livePhoto = false;
+  bool _sound = true;
 
   int _timerSeconds = 3;
   int _recordSeconds = 0;
 
   String? _lastPath;
+  String? _lastMotionPath;
 
   Timer? _recordTimer;
   late final AnimationController _flashAnimation;
 
+  bool get _frontCamera =>
+      widget.cameras.isNotEmpty &&
+      widget.cameras[_cameraIndex].lensDirection ==
+          CameraLensDirection.front;
+
   @override
   void initState() {
     super.initState();
-
     WidgetsBinding.instance.addObserver(this);
 
     _flashAnimation = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 120),
+      duration: const Duration(milliseconds: 100),
     );
 
     _start();
   }
 
   Future<void> _start() async {
-    await Permission.camera.request();
-    await Permission.microphone.request();
-    await Gal.requestAccess();
+    final cameraPermission = await Permission.camera.request();
 
-    if (!await Permission.camera.isGranted) return;
-
-    if (mounted) {
-      setState(() => _permission = true);
+    if (!cameraPermission.isGranted) {
+      if (mounted) setState(() => _permission = false);
+      return;
     }
 
-    if (cameras.isNotEmpty) {
+    // Gal requests the appropriate gallery access for the platform.
+    try {
+      await Gal.requestAccess();
+    } catch (e) {
+      debugPrint('Gallery permission: $e');
+    }
+
+    // Microphone is requested only when the user starts video recording.
+    if (mounted) setState(() => _permission = true);
+
+    if (widget.cameras.isNotEmpty) {
       await _initCamera();
     }
   }
 
   Future<void> _initCamera() async {
-    if (cameras.isEmpty || !mounted) return;
+    if (!mounted || widget.cameras.isEmpty) return;
 
     final old = _camera;
     _camera = null;
+    if (mounted) setState(() {});
 
     if (old != null) {
-      await old.dispose();
+      try {
+        await old.dispose();
+      } catch (_) {}
     }
 
-    final camera = CameraController(
-      cameras[_cameraIndex],
+    final controller = CameraController(
+      widget.cameras[_cameraIndex],
       _videoPreset,
       enableAudio: true,
-      fps: _fps,
-      videoBitrate:
-          _videoPreset == ResolutionPreset.max ? 20000000 : 12000000,
       imageFormatGroup: ImageFormatGroup.jpeg,
     );
 
-    _camera = camera;
+    _camera = controller;
 
     try {
-      await camera.initialize();
+      await controller.initialize();
 
-      _minZoom = await camera.getMinZoomLevel();
-      _maxZoom = await camera.getMaxZoomLevel();
-
+      _minZoom = await controller.getMinZoomLevel();
+      _maxZoom = await controller.getMaxZoomLevel();
       _zoom = _minZoom;
 
-      await camera.setZoomLevel(_zoom);
+      await controller.setZoomLevel(_zoom);
 
       try {
-        await camera.setFocusMode(FocusMode.auto);
+        await controller.setFocusMode(FocusMode.auto);
       } catch (_) {}
 
       try {
-        await camera.setExposureMode(ExposureMode.auto);
+        await controller.setExposureMode(ExposureMode.auto);
       } catch (_) {}
 
       try {
-        await camera.setFlashMode(_flash);
+        await controller.setFlashMode(_flash);
       } catch (_) {}
     } catch (e) {
-      debugPrint('Camera initialization: $e');
+      debugPrint('Camera initialization failed: $e');
+      if (identical(_camera, controller)) _camera = null;
+      try {
+        await controller.dispose();
+      } catch (_) {}
     }
 
-    if (mounted) {
-      setState(() {});
-    }
+    if (mounted) setState(() {});
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused) {
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      _recordTimer?.cancel();
+
       final old = _camera;
       _camera = null;
-      old?.dispose();
+
+      if (old != null) {
+        old.dispose();
+      }
+
+      if (mounted) setState(() => _recording = false);
     } else if (state == AppLifecycleState.resumed &&
         _permission &&
-        cameras.isNotEmpty) {
+        widget.cameras.isNotEmpty) {
       _initCamera();
     }
   }
 
   Future<void> _switchCamera() async {
-    if (cameras.length < 2 || _recording) return;
+    if (widget.cameras.length < 2 || _recording || _busy) return;
 
-    _cameraIndex = (_cameraIndex + 1) % cameras.length;
+    setState(() => _busy = true);
+    _cameraIndex = (_cameraIndex + 1) % widget.cameras.length;
     await _initCamera();
+
+    if (mounted) setState(() => _busy = false);
   }
 
   Future<void> _capture() async {
@@ -193,7 +225,8 @@ class _CameraScreenState extends State<CameraScreen>
 
     if (camera == null ||
         !camera.value.isInitialized ||
-        _busy) {
+        _busy ||
+        _recording) {
       return;
     }
 
@@ -202,116 +235,167 @@ class _CameraScreenState extends State<CameraScreen>
       return;
     }
 
-    if (_timerOn) {
-      for (int i = _timerSeconds; i > 0; i--) {
-        if (!mounted) return;
-
-        setState(() => _recordSeconds = i);
-
-        await Future.delayed(const Duration(seconds: 1));
-      }
-
-      if (mounted) {
-        setState(() => _recordSeconds = 0);
-      }
-    }
-
     setState(() => _busy = true);
 
     try {
+      if (_timerOn) {
+        for (int i = _timerSeconds; i > 0; i--) {
+          if (!mounted) return;
+          setState(() => _recordSeconds = i);
+          await Future.delayed(const Duration(seconds: 1));
+        }
+        if (mounted) setState(() => _recordSeconds = 0);
+      }
+
       if (_sound) {
-        SystemSound.play(SystemSoundType.click);
         HapticFeedback.lightImpact();
       }
 
       _flashAnimation.forward(from: 0).then((_) {
-        if (mounted) {
-          _flashAnimation.reverse();
-        }
+        if (mounted) _flashAnimation.reverse();
       });
 
-      final shot = await camera.takePicture();
-      final bytes = await File(shot.path).readAsBytes();
-
-      Uint8List result = bytes;
-
-      if (_mode == 'PORTRAIT') {
-        final segmenter = SelfieSegmenter(
-          mode: SegmenterMode.single,
-          enableRawSizeMask: true,
-        );
-
-        try {
-          final mask = await segmenter.processImage(
-            InputImage.fromFilePath(shot.path),
-          );
-
-          if (mask != null) {
-            result = await compute(
-              _portraitBytes,
-              <String, dynamic>{
-                'bytes': bytes,
-                'width': mask.width,
-                'height': mask.height,
-                'mask': mask.confidences,
-              },
-            );
-          }
-        } finally {
-          await segmenter.close();
-        }
-      } else {
-        result = await compute(
-          _photoBytes,
-          <String, dynamic>{
-            'bytes': bytes,
-            'hdr': _hdr,
-            'zoom': _zoom,
-            'night': _mode == 'NIGHT',
-          },
-        );
+      // Motion photo: capture a short video clip, then the still image.
+      // This is a custom motion-photo pair, not Apple's native Live Photo format.
+      String? motionPath;
+      if (_livePhoto && _mode != 'PORTRAIT') {
+        motionPath = await _captureMotionClip(camera);
       }
 
-      await File(shot.path).writeAsBytes(
-        result,
-        flush: true,
-      );
+      final shot = await camera.takePicture();
+      String finalPath = shot.path;
 
-      await Gal.putImage(shot.path);
+      if (_mode == 'PORTRAIT') {
+        finalPath = await _makePortrait(shot.path);
+      }
+
+      // Keep the original JPEG bytes for normal/night photos.
+      // Portrait processing creates a separate processed file.
+      await Gal.putImage(finalPath);
+
+      if (motionPath != null) {
+        try {
+          await Gal.putVideo(motionPath);
+        } catch (e) {
+          debugPrint('Could not save motion clip: $e');
+        }
+      }
 
       if (mounted) {
-        setState(() => _lastPath = shot.path);
+        setState(() {
+          _lastPath = finalPath;
+          _lastMotionPath = motionPath;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 2),
+            content: Text(
+              motionPath != null
+                  ? 'تم حفظ الصورة ومقطع الحركة'
+                  : _mode == 'PORTRAIT'
+                      ? 'تم حفظ صورة البورتريه'
+                      : 'تم حفظ الصورة',
+            ),
+          ),
+        );
       }
     } catch (e) {
       debugPrint('Capture failed: $e');
-
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('تعذر التقاط الصورة؛ جرّب مرة أخرى'),
+            content: Text('تعذر التصوير. جرّب مرة أخرى.'),
           ),
         );
       }
     } finally {
       if (mounted) {
-        setState(() => _busy = false);
+        setState(() {
+          _busy = false;
+          _recordSeconds = 0;
+        });
       }
+    }
+  }
+
+  Future<String?> _captureMotionClip(CameraController camera) async {
+    try {
+      if (!camera.value.isInitialized ||
+          camera.value.isRecordingVideo) {
+        return null;
+      }
+
+      await camera.startVideoRecording();
+      await Future.delayed(const Duration(milliseconds: 1500));
+
+      if (!camera.value.isRecordingVideo) return null;
+
+      final clip = await camera.stopVideoRecording();
+      return clip.path;
+    } catch (e) {
+      debugPrint('Motion clip failed: $e');
+      // If a device cannot record this short clip, still take the photo.
+      try {
+        if (camera.value.isRecordingVideo) {
+          await camera.stopVideoRecording();
+        }
+      } catch (_) {}
+      return null;
+    }
+  }
+
+  Future<String> _makePortrait(String originalPath) async {
+    final segmenter = SelfieSegmenter(
+      mode: SegmenterMode.single,
+      enableRawSizeMask: true,
+    );
+
+    try {
+      final input = InputImage.fromFilePath(originalPath);
+      final mask = await segmenter.processImage(input);
+
+      if (mask == null ||
+          mask.width <= 0 ||
+          mask.height <= 0 ||
+          mask.confidences.isEmpty) {
+        return originalPath;
+      }
+
+      final originalBytes = await File(originalPath).readAsBytes();
+
+      final result = await compute(
+        _portraitBytes,
+        <String, dynamic>{
+          'bytes': originalBytes,
+          'width': mask.width,
+          'height': mask.height,
+          'mask': mask.confidences,
+        },
+      );
+
+      final outputPath = originalPath.replaceFirst(
+        RegExp(r'\.jpe?g$', caseSensitive: false),
+        '_portrait.jpg',
+      );
+
+      await File(outputPath).writeAsBytes(result, flush: true);
+      return outputPath;
+    } catch (e) {
+      debugPrint('Portrait processing failed: $e');
+      return originalPath;
+    } finally {
+      await segmenter.close();
     }
   }
 
   Future<void> _toggleRecording() async {
     final camera = _camera;
+    if (camera == null || !camera.value.isInitialized || _busy) return;
 
-    if (camera == null ||
-        !camera.value.isInitialized ||
-        _busy) {
-      return;
-    }
-
-    try {
-      if (_recording) {
+    if (_recording) {
+      try {
         _recordTimer?.cancel();
-
         final video = await camera.stopVideoRecording();
 
         if (mounted) {
@@ -326,60 +410,91 @@ class _CameraScreenState extends State<CameraScreen>
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('تم حفظ الفيديو في المعرض'),
-            ),
+            const SnackBar(content: Text('تم حفظ الفيديو في المعرض')),
           );
         }
-      } else {
-        await camera.startVideoRecording();
-
+      } catch (e) {
+        debugPrint('Stop recording failed: $e');
         if (mounted) {
-          setState(() {
-            _recording = true;
-            _recordSeconds = 0;
-          });
+          setState(() => _recording = false);
         }
-
-        _recordTimer = Timer.periodic(
-          const Duration(seconds: 1),
-          (_) {
-            if (mounted) {
-              setState(() => _recordSeconds++);
-            }
-          },
-        );
       }
-    } catch (e) {
-      debugPrint('Video recording: $e');
+      return;
+    }
 
+    final mic = await Permission.microphone.request();
+    if (!mic.isGranted) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-              'تعذر بدء الفيديو بهذه الجودة على هذا الهاتف',
-            ),
+            content: Text('اسمح باستخدام الميكروفون لتسجيل صوت الفيديو'),
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      await camera.startVideoRecording();
+
+      if (mounted) {
+        setState(() {
+          _recording = true;
+          _recordSeconds = 0;
+        });
+      }
+
+      _recordTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() => _recordSeconds++);
+      });
+    } catch (e) {
+      debugPrint('Start recording failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تعذر بدء الفيديو بهذه الإعدادات على الجهاز'),
           ),
         );
       }
     }
   }
 
-  Future<void> _setQuality(String label) async {
-    if (_recording) return;
+  Future<void> _changeQuality(String label) async {
+    if (_recording || _busy) return;
 
     setState(() {
-      _qualityLabel = label;
-      _videoPreset = label.startsWith('2K')
-          ? ResolutionPreset.max
-          : ResolutionPreset.veryHigh;
       _busy = true;
+      _qualityLabel = label;
+      _videoPreset = switch (label) {
+        'جودة اقتصادية' => ResolutionPreset.medium,
+        'أعلى جودة متاحة' => ResolutionPreset.max,
+        _ => ResolutionPreset.high,
+      };
     });
 
     await _initCamera();
+    if (mounted) setState(() => _busy = false);
+  }
 
-    if (mounted) {
-      setState(() => _busy = false);
+  Future<void> _toggleFlash() async {
+    final camera = _camera;
+    if (camera == null || !camera.value.isInitialized) return;
+
+    final next = _flash == FlashMode.off
+        ? FlashMode.torch
+        : FlashMode.off;
+
+    try {
+      await camera.setFlashMode(next);
+      _flash = next;
+      if (mounted) setState(() {});
+    } catch (e) {
+      debugPrint('Flash unavailable: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('الفلاش غير متاح في الوضع الحالي')),
+        );
+      }
     }
   }
 
@@ -389,9 +504,7 @@ class _CameraScreenState extends State<CameraScreen>
     if (path == null || !await File(path).exists()) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('لا توجد صورة أو فيديو بعد'),
-          ),
+          const SnackBar(content: Text('لا توجد لقطة حديثة')),
         );
       }
       return;
@@ -400,29 +513,12 @@ class _CameraScreenState extends State<CameraScreen>
     await OpenFilex.open(path);
   }
 
-  Future<void> _toggleFlash() async {
-    final camera = _camera;
-    if (camera == null) return;
-
-    _flash = _flash == FlashMode.off
-        ? FlashMode.torch
-        : FlashMode.off;
-
-    try {
-      await camera.setFlashMode(_flash);
-    } catch (_) {}
-
-    if (mounted) {
-      setState(() {});
-    }
-  }
-
   void _showSettings() {
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF171717),
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSheet) => SafeArea(
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheet) => SafeArea(
           child: ListView(
             shrinkWrap: true,
             children: [
@@ -431,48 +527,48 @@ class _CameraScreenState extends State<CameraScreen>
                 child: Text(
                   'إعدادات الكاميرا',
                   textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold),
                 ),
-              ),
-              SwitchListTile(
-                title: const Text('تحسين الألوان والإضاءة'),
-                value: _hdr,
-                onChanged: (v) {
-                  setState(() => _hdr = v);
-                  setSheet(() {});
-                },
-              ),
-              SwitchListTile(
-                title: const Text('صوت التصوير'),
-                value: _sound,
-                onChanged: (v) {
-                  setState(() => _sound = v);
-                  setSheet(() {});
-                },
               ),
               SwitchListTile(
                 title: const Text('شبكة تقسيم الصورة'),
                 value: _grid,
-                onChanged: (v) {
-                  setState(() => _grid = v);
+                onChanged: (value) {
+                  setState(() => _grid = value);
                   setSheet(() {});
                 },
               ),
               SwitchListTile(
                 title: const Text('مؤقت 3 ثوانٍ'),
                 value: _timerOn,
-                onChanged: (v) {
-                  setState(() => _timerOn = v);
+                onChanged: (value) {
+                  setState(() => _timerOn = value);
+                  setSheet(() {});
+                },
+              ),
+              SwitchListTile(
+                title: const Text('Live Photo (صورة + حركة قصيرة)'),
+                subtitle: const Text(
+                  'يحفظ صورة ومقطع فيديو منفصلين',
+                ),
+                value: _livePhoto,
+                onChanged: (value) {
+                  setState(() => _livePhoto = value);
+                  setSheet(() {});
+                },
+              ),
+              SwitchListTile(
+                title: const Text('اهتزاز عند التصوير'),
+                value: _sound,
+                onChanged: (value) {
+                  setState(() => _sound = value);
                   setSheet(() {});
                 },
               ),
               ListTile(
-                title: const Text('إغلاق الإعدادات'),
                 leading: const Icon(Icons.close),
-                onTap: () => Navigator.pop(ctx),
+                title: const Text('إغلاق'),
+                onTap: () => Navigator.pop(context),
               ),
             ],
           ),
@@ -502,54 +598,55 @@ class _CameraScreenState extends State<CameraScreen>
     final camera = _camera;
 
     if (!_permission) {
-      return const Scaffold(
-        backgroundColor: Colors.black,
+      return Scaffold(
         body: Center(
-          child: Text('يرجى السماح باستخدام الكاميرا'),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.camera_alt_outlined, size: 54),
+              const SizedBox(height: 12),
+              const Text('يلزم السماح باستخدام الكاميرا'),
+              const SizedBox(height: 12),
+              FilledButton(
+                onPressed: _start,
+                child: const Text('طلب الصلاحية مرة أخرى'),
+              ),
+              TextButton(
+                onPressed: openAppSettings,
+                child: const Text('فتح إعدادات التطبيق'),
+              ),
+            ],
+          ),
         ),
       );
     }
 
     if (camera == null || !camera.value.isInitialized) {
       return const Scaffold(
-        backgroundColor: Colors.black,
-        body: Center(
-          child: CircularProgressIndicator(),
-        ),
+        body: Center(child: CircularProgressIndicator()),
       );
     }
 
-    final front = cameras[_cameraIndex].lensDirection ==
-        CameraLensDirection.front;
-
     return Scaffold(
-      backgroundColor: Colors.black,
       body: Stack(
+        fit: StackFit.expand,
         children: [
-          Positioned.fill(
+          Center(
             child: GestureDetector(
               onScaleStart: (_) => _scaleStartZoom = _zoom,
-              onScaleUpdate: (d) async {
-                final next = (_scaleStartZoom * d.scale)
-                    .clamp(_minZoom, _maxZoom);
+              onScaleUpdate: (details) async {
+                final next = (_scaleStartZoom * details.scale)
+                    .clamp(_minZoom, _maxZoom)
+                    .toDouble();
 
                 setState(() => _zoom = next);
-
                 try {
                   await camera.setZoomLevel(next);
                 } catch (_) {}
               },
-              child: Center(
-                child: AspectRatio(
-                  aspectRatio: _aspectValue,
-                  child: Transform(
-                    alignment: Alignment.center,
-                    transform: front
-                        ? Matrix4.rotationY(3.1415926)
-                        : Matrix4.identity(),
-                    child: CameraPreview(camera),
-                  ),
-                ),
+              child: AspectRatio(
+                aspectRatio: _aspectValue,
+                child: CameraPreview(camera),
               ),
             ),
           ),
@@ -559,7 +656,7 @@ class _CameraScreenState extends State<CameraScreen>
                 animation: _flashAnimation,
                 builder: (_, __) => Opacity(
                   opacity: _flashAnimation.value,
-                  child: Container(color: Colors.white),
+                  child: const ColoredBox(color: Colors.white),
                 ),
               ),
             ),
@@ -573,7 +670,7 @@ class _CameraScreenState extends State<CameraScreen>
           if (_busy)
             const Positioned.fill(
               child: ColoredBox(
-                color: Color(0x66000000),
+                color: Color(0x55000000),
                 child: Center(
                   child: CircularProgressIndicator(
                     color: Colors.greenAccent,
@@ -581,170 +678,149 @@ class _CameraScreenState extends State<CameraScreen>
                 ),
               ),
             ),
-          Positioned(
-            top: 38,
-            left: 8,
-            right: 8,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          SafeArea(
+            child: Column(
               children: [
-                IconButton(
-                  onPressed: _toggleFlash,
-                  icon: Icon(
-                    _flash == FlashMode.off
-                        ? Icons.flash_off
-                        : Icons.flash_on,
-                    color: Colors.white,
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      IconButton(
+                        onPressed: _toggleFlash,
+                        icon: Icon(
+                          _flash == FlashMode.off
+                              ? Icons.flash_off
+                              : Icons.flash_on,
+                        ),
+                      ),
+                      Text(
+                        '${_zoom.toStringAsFixed(1)}×',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      IconButton(
+                        onPressed: () {
+                          setState(() {
+                            _aspect = switch (_aspect) {
+                              '4:3' => '16:9',
+                              '16:9' => 'Full',
+                              'Full' => '1:1',
+                              _ => '4:3',
+                            };
+                          });
+                        },
+                        icon: Text(
+                          _aspect,
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: _showSettings,
+                        icon: const Icon(Icons.tune),
+                      ),
+                    ],
                   ),
                 ),
-                Text(
-                  '${_zoom.toStringAsFixed(1)}× / ${_maxZoom.toStringAsFixed(1)}×',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                IconButton(
-                  onPressed: _showSettings,
-                  icon: const Icon(Icons.tune, color: Colors.white),
-                ),
-                IconButton(
-                  onPressed: () => setState(() {
-                    _aspect = _aspect == '4:3'
-                        ? '16:9'
-                        : _aspect == '16:9'
-                            ? 'Full'
-                            : '4:3';
-                  }),
-                  icon: Text(
-                    _aspect,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
+                if (_recording || _recordSeconds > 0)
+                  Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Text(
+                      _recording
+                          ? '● تسجيل ${_recordSeconds}s'
+                          : '$_recordSeconds',
+                      style: const TextStyle(
+                        color: Colors.redAccent,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 18,
+                      ),
                     ),
                   ),
-                ),
-              ],
-            ),
-          ),
-          if (_recording || _recordSeconds > 0)
-            Positioned(
-              top: 92,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: Text(
-                  _mode == 'VIDEO' && _recording
-                      ? '● تسجيل  ${_recordSeconds}s'
-                      : '$_recordSeconds',
-                  style: const TextStyle(
-                    color: Colors.redAccent,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 17,
-                  ),
-                ),
-              ),
-            ),
-          Positioned(
-            bottom: 25,
-            left: 0,
-            right: 0,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    _modeButton('VIDEO', 'فيديو'),
-                    _modeButton('PHOTO', 'صورة'),
-                    _modeButton('PORTRAIT', 'بورتريه'),
-                    _modeButton('NIGHT', 'ليل'),
-                  ],
-                ),
+                const Spacer(),
                 if (_mode == 'VIDEO')
                   Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Wrap(
+                      alignment: WrapAlignment.center,
+                      spacing: 6,
                       children: [
-                        _qualityChip('1080p • 30 إطار'),
-                        const SizedBox(width: 8),
-                        _qualityChip('2K • 30 إطار'),
+                        _qualityChip('جودة اقتصادية'),
+                        _qualityChip('جودة عالية'),
+                        _qualityChip('أعلى جودة متاحة'),
                       ],
                     ),
                   ),
-                const SizedBox(height: 12),
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    GestureDetector(
-                      onTap: _openLast,
-                      child: Container(
-                        width: 48,
-                        height: 48,
-                        clipBehavior: Clip.antiAlias,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(9),
-                          border: Border.all(color: Colors.white54),
-                          color: Colors.black54,
-                        ),
-                        child: _lastPath != null &&
-                                File(_lastPath!).existsSync()
-                            ? Image.file(
-                                File(_lastPath!),
-                                fit: BoxFit.cover,
-                              )
-                            : const Icon(
-                                Icons.photo_library_outlined,
-                                color: Colors.white,
-                              ),
-                      ),
-                    ),
-                    GestureDetector(
-                      onTap: _capture,
-                      child: Container(
-                        width: 74,
-                        height: 74,
-                        padding: const EdgeInsets.all(5),
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: Colors.white,
-                            width: 3,
-                          ),
-                        ),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: _mode == 'VIDEO'
-                                ? Colors.redAccent
-                                : Colors.white,
-                            shape: _mode == 'VIDEO' && _recording
-                                ? BoxShape.rectangle
-                                : BoxShape.circle,
-                            borderRadius:
-                                _mode == 'VIDEO' && _recording
-                                    ? BorderRadius.circular(8)
-                                    : null,
-                          ),
-                          child: _recording
-                              ? const Icon(
-                                  Icons.stop,
-                                  color: Colors.white,
-                                  size: 30,
-                                )
-                              : null,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: _switchCamera,
-                      icon: const Icon(
-                        Icons.cameraswitch,
-                        size: 30,
-                        color: Colors.white,
-                      ),
-                    ),
+                    _modeButton('NIGHT', 'ليل'),
+                    _modeButton('PORTRAIT', 'بورتريه'),
+                    _modeButton('PHOTO', 'صورة'),
+                    _modeButton('VIDEO', 'فيديو'),
                   ],
+                ),
+                const SizedBox(height: 18),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(22, 0, 22, 24),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      GestureDetector(
+                        onTap: _openLast,
+                        child: Container(
+                          width: 52,
+                          height: 52,
+                          clipBehavior: Clip.antiAlias,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: Colors.white54),
+                            color: Colors.black54,
+                          ),
+                          child: _lastPath != null &&
+                                  File(_lastPath!).existsSync()
+                              ? Image.file(
+                                  File(_lastPath!),
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) =>
+                                      const Icon(Icons.photo),
+                                )
+                              : const Icon(Icons.photo_library_outlined),
+                        ),
+                      ),
+                      GestureDetector(
+                        onTap: _capture,
+                        child: Container(
+                          width: 78,
+                          height: 78,
+                          padding: const EdgeInsets.all(5),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 3),
+                          ),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 100),
+                            decoration: BoxDecoration(
+                              color: _mode == 'VIDEO'
+                                  ? Colors.redAccent
+                                  : Colors.white,
+                              shape: _mode == 'VIDEO' && _recording
+                                  ? BoxShape.rectangle
+                                  : BoxShape.circle,
+                              borderRadius: _mode == 'VIDEO' && _recording
+                                  ? BorderRadius.circular(8)
+                                  : null,
+                            ),
+                            child: _recording
+                                ? const Icon(Icons.stop, color: Colors.white)
+                                : null,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: _switchCamera,
+                        icon: const Icon(Icons.cameraswitch, size: 32),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -756,39 +832,23 @@ class _CameraScreenState extends State<CameraScreen>
 
   Widget _modeButton(String key, String label) {
     final selected = _mode == key;
-
-    final color = key == 'VIDEO' && selected
-        ? Colors.redAccent
-        : Colors.greenAccent;
+    final selectedColor =
+        key == 'VIDEO' ? Colors.redAccent : Colors.greenAccent;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      child: GestureDetector(
-        onTap: () {
-          if (!_recording) {
-            setState(() => _mode = key);
-          }
+      padding: const EdgeInsets.symmetric(horizontal: 3),
+      child: TextButton(
+        onPressed: () {
+          if (!_recording && !_busy) setState(() => _mode = key);
         },
-        child: Container(
-          padding: const EdgeInsets.symmetric(
-            horizontal: 10,
-            vertical: 7,
-          ),
-          decoration: BoxDecoration(
-            color: selected ? color.withOpacity(0.18) : Colors.transparent,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: selected ? color : Colors.transparent,
-            ),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: selected ? color : Colors.white70,
-              fontWeight: FontWeight.bold,
-              fontSize: 13,
-            ),
-          ),
+        style: TextButton.styleFrom(
+          foregroundColor: selected ? selectedColor : Colors.white70,
+          backgroundColor:
+              selected ? selectedColor.withOpacity(0.16) : Colors.transparent,
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(fontWeight: FontWeight.bold),
         ),
       ),
     );
@@ -797,145 +857,95 @@ class _CameraScreenState extends State<CameraScreen>
   Widget _qualityChip(String label) {
     final selected = _qualityLabel == label;
 
-    return GestureDetector(
-      onTap: () => _setQuality(label),
-      child: Container(
-        padding: const EdgeInsets.symmetric(
-          horizontal: 12,
-          vertical: 7,
-        ),
-        decoration: BoxDecoration(
-          color: selected
-              ? Colors.redAccent.withOpacity(0.18)
-              : Colors.black54,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-            color: selected ? Colors.redAccent : Colors.white24,
-          ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: selected ? Colors.redAccent : Colors.white,
-            fontSize: 11,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
+    return ChoiceChip(
+      label: Text(label, style: const TextStyle(fontSize: 11)),
+      selected: selected,
+      onSelected: (_) => _changeQuality(label),
     );
   }
 }
 
-Uint8List _photoBytes(Map<String, dynamic> args) {
-  final bytes = args['bytes'] as Uint8List;
-  final decoded = img.decodeImage(bytes);
-
-  if (decoded == null) return bytes;
-
-  final oriented = img.bakeOrientation(decoded);
-
-  final zoom = (args['zoom'] as num).toDouble();
-  final hdr = args['hdr'] as bool;
-  final night = args['night'] as bool;
-
-  final fixed = img.adjustColor(
-    oriented,
-    contrast: night ? 1.08 : (hdr ? 1.05 : 1.01),
-    brightness: night ? 1.04 : 1.01,
-    saturation: hdr ? 1.04 : 1.01,
-  );
-
-  // تحسين معتدل حتى لا تتشوه الحروف والتفاصيل مع الزوم.
-  return Uint8List.fromList(
-    img.encodeJpg(
-      fixed,
-      quality: zoom > 4 ? 96 : 97,
-    ),
-  );
-}
-
 Uint8List _portraitBytes(Map<String, dynamic> args) {
   final bytes = args['bytes'] as Uint8List;
-  final mw = args['width'] as int;
-  final mh = args['height'] as int;
+  final maskWidth = args['width'] as int;
+  final maskHeight = args['height'] as int;
   final mask = (args['mask'] as List).cast<double>();
 
   final decoded = img.decodeImage(bytes);
-
-  if (decoded == null || mw <= 0 || mh <= 0 || mask.isEmpty) {
+  if (decoded == null ||
+      maskWidth <= 0 ||
+      maskHeight <= 0 ||
+      mask.isEmpty) {
     return bytes;
   }
 
-  final fg = img.bakeOrientation(decoded);
-  final bg = img.gaussianBlur(fg, radius: 10);
-  final out = img.Image(width: fg.width, height: fg.height);
+  final foreground = img.bakeOrientation(decoded);
+  final background = img.gaussianBlur(foreground, radius: 12);
+  final output = img.Image(
+    width: foreground.width,
+    height: foreground.height,
+  );
 
-  for (var y = 0; y < fg.height; y++) {
-    final my = ((y * mh) / fg.height)
+  for (int y = 0; y < foreground.height; y++) {
+    final my = ((y * maskHeight) / foreground.height)
         .floor()
-        .clamp(0, mh - 1);
+        .clamp(0, maskHeight - 1);
 
-    for (var x = 0; x < fg.width; x++) {
-      final mx = ((x * mw) / fg.width)
+    for (int x = 0; x < foreground.width; x++) {
+      final mx = ((x * maskWidth) / foreground.width)
           .floor()
-          .clamp(0, mw - 1);
+          .clamp(0, maskWidth - 1);
 
-      final i = my * mw + mx;
+      final index = my * maskWidth + mx;
+      final confidence =
+          (index < mask.length ? mask[index] : 0.0).clamp(0.0, 1.0);
 
-      final a = (i < mask.length ? mask[i] : 0.0)
-          .clamp(0.0, 1.0);
+      // Soft transition reduces harsh cutout edges.
+      final alpha = ((confidence - 0.20) / 0.60).clamp(0.0, 1.0);
 
-      final f = fg.getPixel(x, y);
-      final b = bg.getPixel(x, y);
+      final fg = foreground.getPixel(x, y);
+      final bg = background.getPixel(x, y);
 
-      final alpha = ((a - 0.25) / 0.5)
-          .clamp(0.0, 1.0);
-
-      out.setPixelRgba(
+      output.setPixelRgba(
         x,
         y,
-        (f.r * alpha + b.r * (1 - alpha)).round(),
-        (f.g * alpha + b.g * (1 - alpha)).round(),
-        (f.b * alpha + b.b * (1 - alpha)).round(),
+        (fg.r * alpha + bg.r * (1 - alpha)).round(),
+        (fg.g * alpha + bg.g * (1 - alpha)).round(),
+        (fg.b * alpha + bg.b * (1 - alpha)).round(),
         255,
       );
     }
   }
 
-  return Uint8List.fromList(
-    img.encodeJpg(out, quality: 96),
-  );
+  return Uint8List.fromList(img.encodeJpg(output, quality: 96));
 }
 
 class _GridPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    final p = Paint()
+    final paint = Paint()
       ..color = Colors.white30
       ..strokeWidth = 1;
 
     canvas.drawLine(
       Offset(size.width / 3, 0),
       Offset(size.width / 3, size.height),
-      p,
+      paint,
     );
-
     canvas.drawLine(
       Offset(size.width * 2 / 3, 0),
       Offset(size.width * 2 / 3, size.height),
-      p,
+      paint,
     );
-
     canvas.drawLine(
       Offset(0, size.height / 3),
       Offset(size.width, size.height / 3),
-      p,
+      paint,
     );
-
     canvas.drawLine(
       Offset(0, size.height * 2 / 3),
       Offset(size.width, size.height * 2 / 3),
-      p,
+      paint,
     );
   }
 

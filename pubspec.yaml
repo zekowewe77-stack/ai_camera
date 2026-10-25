@@ -1,5 +1,6 @@
+
 name: ai_camera_pro_2027
-description: "AI Camera Pro 2027 - تطبيق كاميرا ذكي احترافي"
+description: "AI Camera Pro - Flutter camera application"
 publish_to: 'none'
 
 version: 1.0.0+1
