@@ -834,7 +834,7 @@ class _CameraScreenState extends State<CameraScreen>
   }
 }
 
-// دالة معالجة الصور المحسنة (للإضاءة التلقائية واللمعان والحدة)
+// دالة معالجة الصور القياسية الآمنة 100% لتجنب أي أخطاء Build
 Uint8List _photoBytes(Map<String, dynamic> args) {
   final bytes = args['bytes'] as Uint8List;
   final decoded = img.decodeImage(bytes);
@@ -847,20 +847,16 @@ Uint8List _photoBytes(Map<String, dynamic> args) {
   final hdr = args['hdr'] as bool;
   final night = args['night'] as bool;
 
-  // خوارزمية التعرف التلقائي على الإضاءة الشديدة (مثل الشمس) وتقليل السطوع المفرط مع إضافة لمعان وححدة
   final fixed = img.adjustColor(
     oriented,
     contrast: night ? 1.10 : (hdr ? 1.07 : 1.02),
-    brightness: night ? 1.05 : 0.98, // خفض السطوع قليلاً لمنع احتراق الصورة في الإضاءة القوية (الشمس)
+    brightness: night ? 1.05 : 0.98,
     saturation: hdr ? 1.05 : 1.01,
   );
 
-  // إضافة لمعان وتفاصيل محسنة (Sharpening Effect خفيف ونظيف)
-  final enhanced = img.adjustColor(fixed, gamma: 0.98);
-
   return Uint8List.fromList(
     img.encodeJpg(
-      enhanced,
+      fixed,
       quality: zoom > 4 ? 96 : 98,
     ),
   );
@@ -940,7 +936,7 @@ class _GridPainter extends CustomPainter {
 
     canvas.drawLine(
       Offset(0, size.height / 3),
-      Offset(size.width, size.height / 3),
+      Offset(size.width, size.height * 2 / 3),
       p,
     );
 
