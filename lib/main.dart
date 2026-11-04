@@ -16,17 +16,7 @@ List<CameraDescription> cameras = [];
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-  ]);
-
-  SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.light,
-    ),
-  );
+  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
   try {
     cameras = await availableCameras();
@@ -59,50 +49,57 @@ class CameraScreen extends StatefulWidget {
 }
 
 class _CameraScreenState extends State<CameraScreen>
-    with WidgetsBindingObserver, TickerProviderStateMixin {
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   CameraController? _camera;
 
   int _cameraIndex = 0;
 
   String _mode = 'PHOTO';
   String _aspect = '4:3';
+  String _style = 'AI'; // AI, VIVID, WARM, COOL, BW
 
   String _qualityLabel = '1080p • 30 إطار';
   ResolutionPreset _videoPreset = ResolutionPreset.veryHigh;
 
-  double _zoom = 1;
-  double _minZoom = 1;
-  double _maxZoom = 1;
-  double _scaleStartZoom = 1;
+  final int _fps = 30;
 
-  double _minExposure = 0;
-  double _maxExposure = 0;
-  double _exposure = 0;
+  double _zoom = 1.0;
+  double _minZoom = 1.0;
+  double _maxZoom = 1.0;
+  double _scaleStartZoom = 1.0;
+
+  double _exposure = 0.0;
+  double _minExposure = -2.0;
+  double _maxExposure = 2.0;
+
+  Offset? _focusPoint;
+  Timer? _focusTimer;
 
   FlashMode _flash = FlashMode.off;
 
   bool _permission = false;
+  bool _busy = false;
   bool _recording = false;
-  bool _processing = false;
 
+  // الميزات الاحترافية
+  bool _livePhoto = false;
+  bool _liveCapturing = false;
   bool _grid = false;
   bool _hdr = true;
   bool _sound = true;
   bool _timerOn = false;
   bool _mirrorFront = true;
+  bool _showStyles = false;
 
-  int _timerSeconds = 3;
+  final int _timerSeconds = 3;
   int _recordSeconds = 0;
 
   String? _lastPath;
-  Offset? _focusPos;
+  String? _lastThumbPath;
+  bool _lastIsVideo = false;
 
   Timer? _recordTimer;
-
-  final GlobalKey _previewKey = GlobalKey();
-
   late final AnimationController _flashAnimation;
-  late final AnimationController _focusAnimation;
 
   @override
   void initState() {
@@ -112,12 +109,7 @@ class _CameraScreenState extends State<CameraScreen>
 
     _flashAnimation = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 120),
-    );
-
-    _focusAnimation = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 400),
+      duration: const Duration(milliseconds: 110),
     );
 
     _start();
@@ -144,6 +136,7 @@ class _CameraScreenState extends State<CameraScreen>
 
     final old = _camera;
     _camera = null;
+    if (mounted) setState(() {});
 
     if (old != null) {
       try {
@@ -151,47 +144,66 @@ class _CameraScreenState extends State<CameraScreen>
       } catch (_) {}
     }
 
-    final camera = CameraController(
+    CameraController camera = CameraController(
       cameras[_cameraIndex],
       _videoPreset,
       enableAudio: true,
+      fps: _fps,
+      videoBitrate:
+          _videoPreset == ResolutionPreset.max ? 20000000 : 12000000,
       imageFormatGroup: ImageFormatGroup.jpeg,
     );
+
+    try {
+      await camera.initialize();
+    } catch (_) {
+      // حماية تلقائية: إذا لم يدعم الهاتف الجودة العالية على هذه العدسة يفتح بأعلى جودة متاحة دون انهيار
+      try {
+        await camera.dispose();
+      } catch (_) {}
+
+      camera = CameraController(
+        cameras[_cameraIndex],
+        ResolutionPreset.high,
+        enableAudio: true,
+        imageFormatGroup: ImageFormatGroup.jpeg,
+      );
+
+      try {
+        await camera.initialize();
+      } catch (e) {
+        debugPrint('Camera fallback error: $e');
+        return;
+      }
+    }
 
     _camera = camera;
 
     try {
-      await camera.initialize();
-
       _minZoom = await camera.getMinZoomLevel();
       _maxZoom = await camera.getMaxZoomLevel();
-
       _zoom = _minZoom;
       await camera.setZoomLevel(_zoom);
+    } catch (_) {}
 
-      try {
-        _minExposure = await camera.getMinExposureOffset();
-        _maxExposure = await camera.getMaxExposureOffset();
-        _exposure = 0;
-        await camera.setExposureOffset(0);
-      } catch (_) {
-        _minExposure = 0;
-        _maxExposure = 0;
-      }
+    try {
+      _minExposure = await camera.getMinExposureOffset();
+      _maxExposure = await camera.getMaxExposureOffset();
+      _exposure = 0.0;
+    } catch (_) {}
 
-      try {
-        await camera.setFocusMode(FocusMode.auto);
-      } catch (_) {}
+    try {
+      await camera.setFocusMode(FocusMode.auto);
+    } catch (_) {}
 
-      try {
-        await camera.setExposureMode(ExposureMode.auto);
-      } catch (_) {}
+    try {
+      await camera.setExposureMode(ExposureMode.auto);
+    } catch (_) {}
 
-      try {
-        await camera.setFlashMode(_flash);
-      } catch (_) {}
-    } catch (e) {
-      debugPrint('Camera initialization: $e');
+    try {
+      await camera.setFlashMode(_flash);
+    } catch (_) {
+      _flash = FlashMode.off;
     }
 
     if (mounted) {
@@ -214,98 +226,71 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   Future<void> _switchCamera() async {
-    if (cameras.length < 2 || _recording) return;
-
+    if (cameras.length < 2 || _recording || _busy) return;
+    HapticFeedback.selectionClick();
     _cameraIndex = (_cameraIndex + 1) % cameras.length;
     await _initCamera();
   }
 
-  // لمس أي مكان على الشاشة = تركيز + ضبط إضاءة على النقطة دي
-  Future<void> _handleTap(TapUpDetails d) async {
+  Future<void> _setZoom(double value) async {
     final camera = _camera;
     if (camera == null || !camera.value.isInitialized) return;
 
-    final box = _previewKey.currentContext?.findRenderObject() as RenderBox?;
+    final next = value.clamp(_minZoom, _maxZoom);
+    setState(() => _zoom = next);
 
-    if (box != null && box.size.width > 0 && box.size.height > 0) {
-      final local = box.globalToLocal(d.globalPosition);
+    try {
+      await camera.setZoomLevel(next);
+    } catch (_) {}
+  }
 
-      final nx = _clampDouble(local.dx / box.size.width, 0.0, 1.0);
-      final ny = _clampDouble(local.dy / box.size.height, 0.0, 1.0);
+  Future<void> _setExposure(double value) async {
+    final camera = _camera;
+    if (camera == null || !camera.value.isInitialized) return;
 
-      try {
-        await camera.setFocusPoint(Offset(nx, ny));
-        await camera.setExposurePoint(Offset(nx, ny));
-        await camera.setFocusMode(FocusMode.auto);
-      } catch (_) {}
-    }
+    final next = value.clamp(_minExposure, _maxExposure);
+    setState(() => _exposure = next);
 
-    if (!mounted) return;
+    try {
+      await camera.setExposureOffset(next);
+    } catch (_) {}
+  }
 
-    setState(() => _focusPos = d.globalPosition);
-    _focusAnimation.forward(from: 0).then((_) async {
-      await Future.delayed(const Duration(milliseconds: 500));
-      if (mounted) _focusAnimation.reverse();
+  Future<void> _onTapFocus(
+    TapUpDetails details,
+    BoxConstraints constraints,
+  ) async {
+    final camera = _camera;
+    if (camera == null || !camera.value.isInitialized) return;
+
+    final nx =
+        (details.localPosition.dx / constraints.maxWidth).clamp(0.0, 1.0);
+    final ny =
+        (details.localPosition.dy / constraints.maxHeight).clamp(0.0, 1.0);
+
+    setState(() => _focusPoint = details.localPosition);
+
+    _focusTimer?.cancel();
+    _focusTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted) {
+        setState(() => _focusPoint = null);
+      }
     });
-  }
-
-  Future<void> _cycleFlash() async {
-    final camera = _camera;
-    if (camera == null) return;
-
-    setState(() {
-      _flash = _flash == FlashMode.off
-          ? FlashMode.auto
-          : _flash == FlashMode.auto
-              ? FlashMode.torch
-              : FlashMode.off;
-    });
 
     try {
-      await camera.setFlashMode(_flash);
+      await camera.setFocusPoint(Offset(nx, ny));
+      await camera.setFocusMode(FocusMode.auto);
     } catch (_) {}
-  }
-
-  Future<void> _setZoom(double z) async {
-    final camera = _camera;
-    if (camera == null) return;
-
-    final v = _clampDouble(z, _minZoom, _maxZoom);
-
-    setState(() => _zoom = v);
 
     try {
-      await camera.setZoomLevel(v);
+      await camera.setExposurePoint(Offset(nx, ny));
     } catch (_) {}
-  }
-
-  Future<void> _setExposure(double v) async {
-    final camera = _camera;
-    if (camera == null) return;
-
-    setState(() => _exposure = v);
-
-    try {
-      await camera.setExposureOffset(v);
-    } catch (_) {}
-  }
-
-  List<double> _zoomChips() {
-    final chips = <double>[1.0];
-    if (_maxZoom >= 2.1) chips.add(2.0);
-    if (_maxZoom >= 4.6) chips.add(5.0);
-
-    final maxR = double.parse(_maxZoom.toStringAsFixed(1));
-    if (!chips.contains(maxR)) chips.add(maxR);
-
-    chips.sort();
-    return chips;
   }
 
   Future<void> _capture() async {
-    var camera = _camera;
+    final camera = _camera;
 
-    if (camera == null || !camera.value.isInitialized || _processing) {
+    if (camera == null || !camera.value.isInitialized || _busy) {
       return;
     }
 
@@ -317,45 +302,42 @@ class _CameraScreenState extends State<CameraScreen>
     if (_timerOn) {
       for (int i = _timerSeconds; i > 0; i--) {
         if (!mounted) return;
-
         setState(() => _recordSeconds = i);
-
+        if (_sound) SystemSound.play(SystemSoundType.click);
         await Future.delayed(const Duration(seconds: 1));
       }
 
       if (mounted) {
         setState(() => _recordSeconds = 0);
       }
-
-      camera = _camera;
-      if (camera == null || !camera.value.isInitialized) return;
     }
 
-    if (_sound) {
-      SystemSound.play(SystemSoundType.click);
-      HapticFeedback.lightImpact();
-    }
-
-    _flashAnimation.forward(from: 0).then((_) {
-      if (mounted) _flashAnimation.reverse();
-    });
-
-    setState(() => _processing = true);
+    setState(() => _busy = true);
 
     try {
+      if (_sound) {
+        SystemSound.play(SystemSoundType.click);
+        HapticFeedback.mediumImpact();
+      }
+
+      _flashAnimation.forward(from: 0).then((_) {
+        if (mounted) {
+          _flashAnimation.reverse();
+        }
+      });
+
       final shot = await camera.takePicture();
       final bytes = await File(shot.path).readAsBytes();
 
-      final front = cameras[_cameraIndex].lensDirection ==
-          CameraLensDirection.front;
-      final mirror = front && _mirrorFront;
+      final isFront =
+          cameras[_cameraIndex].lensDirection == CameraLensDirection.front;
 
-      Uint8List result;
+      Uint8List result = bytes;
 
       if (_mode == 'PORTRAIT') {
         final segmenter = SelfieSegmenter(
           mode: SegmenterMode.single,
-          enableRawSizeMask: false,
+          enableRawSizeMask: true,
         );
 
         try {
@@ -371,17 +353,10 @@ class _CameraScreenState extends State<CameraScreen>
                 'width': mask.width,
                 'height': mask.height,
                 'mask': mask.confidences,
-                'mirror': mirror,
-              },
-            );
-          } else {
-            result = await compute(
-              _photoBytes,
-              <String, dynamic>{
-                'bytes': bytes,
+                'aspect': _aspect,
+                'flip': isFront && _mirrorFront,
                 'hdr': _hdr,
-                'night': false,
-                'mirror': mirror,
+                'style': _style,
               },
             );
           }
@@ -394,8 +369,11 @@ class _CameraScreenState extends State<CameraScreen>
           <String, dynamic>{
             'bytes': bytes,
             'hdr': _hdr,
+            'zoom': _zoom,
             'night': _mode == 'NIGHT',
-            'mirror': mirror,
+            'aspect': _aspect,
+            'flip': isFront && _mirrorFront,
+            'style': _style,
           },
         );
       }
@@ -404,20 +382,63 @@ class _CameraScreenState extends State<CameraScreen>
       await Gal.putImage(shot.path);
 
       if (mounted) {
-        setState(() => _lastPath = shot.path);
+        setState(() {
+          _lastPath = shot.path;
+          _lastThumbPath = shot.path;
+          _lastIsVideo = false;
+        });
+      }
+
+      // خاصية Live Photo مثل الآيفون: تسجيل لحظة حية مع الصورة
+      if (_livePhoto && _mode == 'PHOTO') {
+        if (mounted) {
+          setState(() {
+            _busy = false;
+            _liveCapturing = true;
+          });
+        }
+        try {
+          await camera.startVideoRecording();
+          await Future.delayed(const Duration(milliseconds: 1600));
+          final liveClip = await camera.stopVideoRecording();
+          await Gal.putVideo(liveClip.path);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                duration: Duration(seconds: 2),
+                content: Text('تم حفظ الصورة الحية (Live Photo) في المعرض ✨'),
+              ),
+            );
+          }
+        } catch (_) {
+          // في حال لم يدعم الهاتف التسجيل الفوري نكتفي بالصورة المحفوظة
+        } finally {
+          if (mounted) {
+            setState(() => _liveCapturing = false);
+          }
+        }
       }
     } catch (e) {
       debugPrint('Capture failed: $e');
-      _snack('تعذر التقاط الصورة؛ جرّب مرة أخرى');
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تعذر التقاط الصورة؛ جرّب مرة أخرى'),
+          ),
+        );
+      }
     } finally {
-      if (mounted) setState(() => _processing = false);
+      if (mounted) {
+        setState(() => _busy = false);
+      }
     }
   }
 
   Future<void> _toggleRecording() async {
     final camera = _camera;
 
-    if (camera == null || !camera.value.isInitialized) {
+    if (camera == null || !camera.value.isInitialized || _busy) {
       return;
     }
 
@@ -426,18 +447,28 @@ class _CameraScreenState extends State<CameraScreen>
         _recordTimer?.cancel();
 
         final video = await camera.stopVideoRecording();
+        HapticFeedback.heavyImpact();
 
         if (mounted) {
           setState(() {
             _recording = false;
             _recordSeconds = 0;
             _lastPath = video.path;
+            _lastIsVideo = true;
           });
         }
 
         await Gal.putVideo(video.path);
-        _snack('تم حفظ الفيديو في المعرض');
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('تم حفظ الفيديو في المعرض بنجاح'),
+            ),
+          );
+        }
       } else {
+        HapticFeedback.mediumImpact();
         await camera.startVideoRecording();
 
         if (mounted) {
@@ -458,64 +489,119 @@ class _CameraScreenState extends State<CameraScreen>
       }
     } catch (e) {
       debugPrint('Video recording: $e');
-      _snack('تعذر بدء الفيديو بهذه الجودة على هذا الهاتف');
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'تعذر بدء الفيديو بهذه الجودة على هذا الهاتف',
+            ),
+          ),
+        );
+      }
     }
   }
 
   Future<void> _setQuality(String label) async {
-    if (_recording || _processing) return;
+    if (_recording || _busy) return;
 
     setState(() {
       _qualityLabel = label;
       _videoPreset = label.startsWith('2K')
           ? ResolutionPreset.max
           : ResolutionPreset.veryHigh;
+      _busy = true;
     });
 
     await _initCamera();
+
+    if (mounted) {
+      setState(() => _busy = false);
+    }
   }
 
   Future<void> _openLast() async {
     final path = _lastPath;
 
     if (path == null || !await File(path).exists()) {
-      _snack('لا توجد صورة أو فيديو بعد');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('لا توجد صورة أو فيديو بعد'),
+          ),
+        );
+      }
       return;
     }
 
     await OpenFilex.open(path);
   }
 
-  void _snack(String msg) {
-    if (!mounted) return;
+  Future<void> _toggleFlash() async {
+    final camera = _camera;
+    if (camera == null) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg)),
-    );
+    final modes = [
+      FlashMode.off,
+      FlashMode.auto,
+      FlashMode.always,
+      FlashMode.torch,
+    ];
+    final nextIdx = (modes.indexOf(_flash) + 1) % modes.length;
+    _flash = modes[nextIdx];
+
+    try {
+      await camera.setFlashMode(_flash);
+    } catch (_) {
+      _flash = FlashMode.off;
+    }
+
+    if (mounted) {
+      setState(() {});
+    }
   }
+
+  IconData get _flashIcon => switch (_flash) {
+        FlashMode.off => Icons.flash_off_rounded,
+        FlashMode.auto => Icons.flash_auto_rounded,
+        FlashMode.always => Icons.flash_on_rounded,
+        FlashMode.torch => Icons.highlight_rounded,
+      };
 
   void _showSettings() {
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xFF171717),
+      backgroundColor: const Color(0xFF141414),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSheet) => SafeArea(
           child: ListView(
             shrinkWrap: true,
             children: [
-              const Padding(
-                padding: EdgeInsets.all(16),
-                child: Text(
-                  'إعدادات الكاميرا',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CustomPaint(
+                    size: const Size(28, 28),
+                    painter: _ProLensLogoPainter(),
                   ),
-                ),
+                  const SizedBox(width: 10),
+                  const Text(
+                    'إعدادات كاميرا AI Pro',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
               ),
+              const SizedBox(height: 8),
               SwitchListTile(
-                title: const Text('تحسين الألوان والإضاءة'),
+                title: const Text('موازنة الإضاءة الذكية (Smart AI HDR)'),
+                subtitle: const Text('منع احتراق الشمس وتفتيح الظلال تلقائياً'),
                 value: _hdr,
                 onChanged: (v) {
                   setState(() => _hdr = v);
@@ -523,7 +609,24 @@ class _CameraScreenState extends State<CameraScreen>
                 },
               ),
               SwitchListTile(
-                title: const Text('صوت التصوير'),
+                title: const Text('صورة حية (Live Photo)'),
+                subtitle: const Text('تسجيل لحظة متحركة مع الصورة مثل الآيفون'),
+                value: _livePhoto,
+                onChanged: (v) {
+                  setState(() => _livePhoto = v);
+                  setSheet(() {});
+                },
+              ),
+              SwitchListTile(
+                title: const Text('مرآة الكاميرا الأمامية'),
+                value: _mirrorFront,
+                onChanged: (v) {
+                  setState(() => _mirrorFront = v);
+                  setSheet(() {});
+                },
+              ),
+              SwitchListTile(
+                title: const Text('صوت غالق الكاميرا'),
                 value: _sound,
                 onChanged: (v) {
                   setState(() => _sound = v);
@@ -531,7 +634,7 @@ class _CameraScreenState extends State<CameraScreen>
                 },
               ),
               SwitchListTile(
-                title: const Text('شبكة تقسيم الصورة'),
+                title: const Text('شبكة التقسيم الهندسي'),
                 value: _grid,
                 onChanged: (v) {
                   setState(() => _grid = v);
@@ -539,23 +642,15 @@ class _CameraScreenState extends State<CameraScreen>
                 },
               ),
               SwitchListTile(
-                title: const Text('مؤقت 3 ثوانٍ'),
+                title: const Text('مؤقت ذاتي (3 ثوانٍ)'),
                 value: _timerOn,
                 onChanged: (v) {
                   setState(() => _timerOn = v);
                   setSheet(() {});
                 },
               ),
-              SwitchListTile(
-                title: const Text('حفظ السيلفي بنفس اتجاه المعاينة'),
-                value: _mirrorFront,
-                onChanged: (v) {
-                  setState(() => _mirrorFront = v);
-                  setSheet(() {});
-                },
-              ),
               ListTile(
-                title: const Text('إغلاق الإعدادات'),
+                title: const Text('إغلاق الإعدادات', textAlign: TextAlign.center),
                 leading: const Icon(Icons.close),
                 onTap: () => Navigator.pop(ctx),
               ),
@@ -567,34 +662,24 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   double get _aspectValue => switch (_aspect) {
-        '1:1' => 1,
+        '1:1' => 1.0,
         '16:9' => 9 / 16,
         'Full' => 9 / 19.5,
         _ => 3 / 4,
       };
 
-  IconData _flashIcon(FlashMode m) {
-    switch (m) {
-      case FlashMode.auto:
-        return Icons.flash_auto;
-      case FlashMode.torch:
-      case FlashMode.always:
-        return Icons.flash_on;
-      case FlashMode.off:
-        return Icons.flash_off;
-    }
+  String _formatTime(int sec) {
+    final m = (sec ~/ 60).toString().padLeft(2, '0');
+    final s = (sec % 60).toString().padLeft(2, '0');
+    return '$m:$s';
   }
-
-  String _zoomLabel(double z) => z == z.roundToDouble()
-      ? '${z.round()}×'
-      : '${z.toStringAsFixed(1)}×';
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _recordTimer?.cancel();
+    _focusTimer?.cancel();
     _flashAnimation.dispose();
-    _focusAnimation.dispose();
     _camera?.dispose();
     super.dispose();
   }
@@ -604,76 +689,131 @@ class _CameraScreenState extends State<CameraScreen>
     final camera = _camera;
 
     if (!_permission) {
-      return const Scaffold(
+      return Scaffold(
         backgroundColor: Colors.black,
         body: Center(
-          child: Text('يرجى السماح باستخدام الكاميرا'),
-        ),
-      );
-    }
-
-    if (cameras.isEmpty) {
-      return const Scaffold(
-        backgroundColor: Colors.black,
-        body: Center(
-          child: Text('لا توجد كاميرا متاحة على هذا الجهاز'),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CustomPaint(
+                size: const Size(72, 72),
+                painter: _ProLensLogoPainter(),
+              ),
+              const SizedBox(height: 20),
+              const Text(
+                'يرجى السماح باستخدام الكاميرا والميكروفون',
+                style: TextStyle(fontSize: 16),
+              ),
+              const SizedBox(height: 14),
+              ElevatedButton(
+                onPressed: _start,
+                child: const Text('تفعيل الصلاحيات'),
+              ),
+            ],
+          ),
         ),
       );
     }
 
     if (camera == null || !camera.value.isInitialized) {
-      return const Scaffold(
+      return Scaffold(
         backgroundColor: Colors.black,
         body: Center(
-          child: CircularProgressIndicator(),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CustomPaint(
+                size: const Size(64, 64),
+                painter: _ProLensLogoPainter(),
+              ),
+              const SizedBox(height: 20),
+              const CircularProgressIndicator(color: Colors.amberAccent),
+            ],
+          ),
         ),
       );
     }
 
-    final front = cameras[_cameraIndex].lensDirection ==
-        CameraLensDirection.front;
+    final previewSize = camera.value.previewSize;
 
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // ===== المعاينة =====
+          // 1. شاشة عرض الكاميرا الاحترافية بدون مط أو تشويه
           Positioned.fill(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onScaleStart: (_) => _scaleStartZoom = _zoom,
-              onScaleUpdate: (d) async {
-                final next = _clampDouble(
-                  _scaleStartZoom * d.scale,
-                  _minZoom,
-                  _maxZoom,
-                );
-
-                if ((next - _zoom).abs() < 0.01) return;
-
-                setState(() => _zoom = next);
-
-                try {
-                  await camera.setZoomLevel(next);
-                } catch (_) {}
-              },
-              onTapUp: _handleTap,
-              child: Center(
-                child: AspectRatio(
-                  aspectRatio: _aspectValue,
-                  child: Transform(
-                    alignment: Alignment.center,
-                    transform: front
-                        ? Matrix4.rotationY(3.1415926)
-                        : Matrix4.identity(),
-                    child: CameraPreview(camera, key: _previewKey),
+            child: Center(
+              child: AspectRatio(
+                aspectRatio: _aspectValue,
+                child: ClipRect(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      return GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onScaleStart: (_) => _scaleStartZoom = _zoom,
+                        onScaleUpdate: (d) =>
+                            _setZoom(_scaleStartZoom * d.scale),
+                        onTapUp: (d) => _onTapFocus(d, constraints),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            if (previewSize != null)
+                              FittedBox(
+                                fit: BoxFit.cover,
+                                child: SizedBox(
+                                  width: previewSize.height,
+                                  height: previewSize.width,
+                                  child: CameraPreview(camera),
+                                ),
+                              )
+                            else
+                              CameraPreview(camera),
+                            if (_grid)
+                              IgnorePointer(
+                                child: CustomPaint(painter: _GridPainter()),
+                              ),
+                            if (_focusPoint != null)
+                              Positioned(
+                                left: (_focusPoint!.dx - 36).clamp(
+                                  0.0,
+                                  constraints.maxWidth - 72,
+                                ),
+                                top: (_focusPoint!.dy - 36).clamp(
+                                  0.0,
+                                  constraints.maxHeight - 72,
+                                ),
+                                child: IgnorePointer(
+                                  child: Container(
+                                    width: 72,
+                                    height: 72,
+                                    decoration: BoxDecoration(
+                                      border: Border.all(
+                                        color: Colors.amberAccent,
+                                        width: 1.8,
+                                      ),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: const Center(
+                                      child: Icon(
+                                        Icons.wb_sunny_outlined,
+                                        color: Colors.amberAccent,
+                                        size: 18,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      );
+                    },
                   ),
                 ),
               ),
             ),
           ),
 
-          // ===== وميض التصوير =====
+          // 2. وميض الالتقاط
           Positioned.fill(
             child: IgnorePointer(
               child: AnimatedBuilder(
@@ -686,206 +826,257 @@ class _CameraScreenState extends State<CameraScreen>
             ),
           ),
 
-          // ===== الشبكة =====
-          if (_grid)
-            Positioned.fill(
-              child: IgnorePointer(
-                child: CustomPaint(painter: _GridPainter()),
-              ),
-            ),
-
-          // ===== دائرة التركيز عند اللمس =====
-          if (_focusPos != null)
+          // 3. شريط موازنة الإضاءة والشمس اليدوي على الجانب
+          if (_minExposure < _maxExposure)
             Positioned(
-              left: _focusPos!.dx - 36,
-              top: _focusPos!.dy - 36,
-              child: IgnorePointer(
-                child: AnimatedBuilder(
-                  animation: _focusAnimation,
-                  builder: (_, __) {
-                    final v = Curves.easeOut.transform(
-                      _focusAnimation.value,
-                    );
-
-                    return Opacity(
-                      opacity: _clampDouble(v, 0.0, 1.0),
-                      child: Transform.scale(
-                        scale: 1.6 - 0.6 * v,
-                        child: Container(
-                          width: 72,
-                          height: 72,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: Colors.yellowAccent,
-                              width: 2,
-                            ),
-                          ),
+              right: 10,
+              top: MediaQuery.of(context).size.height * 0.27,
+              bottom: MediaQuery.of(context).size.height * 0.36,
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: Colors.white12),
+                ),
+                child: Column(
+                  children: [
+                    const Icon(
+                      Icons.wb_sunny_rounded,
+                      color: Colors.amberAccent,
+                      size: 17,
+                    ),
+                    Expanded(
+                      child: RotatedBox(
+                        quarterTurns: 3,
+                        child: Slider(
+                          value: _exposure,
+                          min: _minExposure,
+                          max: _maxExposure,
+                          activeColor: Colors.amberAccent,
+                          inactiveColor: Colors.white24,
+                          onChanged: _setExposure,
                         ),
                       ),
-                    );
-                  },
+                    ),
+                    GestureDetector(
+                      onTap: () => _setExposure(0.0),
+                      child: Text(
+                        _exposure == 0
+                            ? 'AI'
+                            : _exposure > 0
+                                ? '+${_exposure.toStringAsFixed(1)}'
+                                : _exposure.toStringAsFixed(1),
+                        style: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.amberAccent,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
 
-          // ===== الشريط العلوي =====
+          // 4. شاشة الانتظار أثناء المعالجة الذكية
+          if (_busy)
+            const Positioned.fill(
+              child: ColoredBox(
+                color: Color(0x55000000),
+                child: Center(
+                  child: CircularProgressIndicator(
+                    color: Colors.amberAccent,
+                  ),
+                ),
+              ),
+            ),
+
+          // 5. الشريط العلوي الاحترافي (مثل الآيفون)
           Positioned(
-            top: 38,
-            left: 8,
-            right: 8,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                IconButton(
-                  onPressed: _cycleFlash,
-                  icon: Icon(
-                    _flashIcon(_flash),
-                    color: _flash == FlashMode.off
-                        ? Colors.white
-                        : Colors.yellowAccent,
-                  ),
-                ),
-                Text(
-                  '${_zoom.toStringAsFixed(1)}× / ${_maxZoom.toStringAsFixed(1)}×',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
-                  ),
-                ),
-                IconButton(
-                  onPressed: _showSettings,
-                  icon: const Icon(Icons.tune, color: Colors.white),
-                ),
-                IconButton(
-                  onPressed: () => setState(() {
-                    _aspect = switch (_aspect) {
-                      '4:3' => '16:9',
-                      '16:9' => '1:1',
-                      '1:1' => 'Full',
-                      _ => '4:3',
-                    };
-                  }),
-                  icon: Text(
-                    _aspect,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 12,
+            top: MediaQuery.of(context).padding.top + 8,
+            left: 12,
+            right: 12,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xAA121212),
+                borderRadius: BorderRadius.circular(30),
+                border: Border.all(color: Colors.white12),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  // زر الفلاش
+                  IconButton(
+                    onPressed: _toggleFlash,
+                    icon: Icon(
+                      _flashIcon,
+                      color: _flash == FlashMode.off
+                          ? Colors.white
+                          : Colors.amberAccent,
                     ),
                   ),
-                ),
-              ],
+
+                  // زر اللايف فوتو (Live Photo) مثل الآيفون
+                  IconButton(
+                    onPressed: () {
+                      HapticFeedback.selectionClick();
+                      setState(() => _livePhoto = !_livePhoto);
+                    },
+                    icon: Icon(
+                      _livePhoto
+                          ? Icons.motion_photos_on_rounded
+                          : Icons.motion_photos_off_rounded,
+                      color: _livePhoto ? Colors.amberAccent : Colors.white70,
+                    ),
+                  ),
+
+                  // زر الفلاتر الاحترافية (Styles)
+                  IconButton(
+                    onPressed: () => setState(() => _showStyles = !_showStyles),
+                    icon: Icon(
+                      Icons.Auto_awesome_rounded,
+                      color: _style != 'AI' ? Colors.amberAccent : Colors.white,
+                    ),
+                  ),
+
+                  // زر أبعاد الصورة
+                  TextButton(
+                    onPressed: () => setState(() {
+                      _aspect = switch (_aspect) {
+                        '4:3' => '16:9',
+                        '16:9' => '1:1',
+                        '1:1' => 'Full',
+                        _ => '4:3',
+                      };
+                    }),
+                    child: Text(
+                      _aspect,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+
+                  // زر الإعدادات
+                  IconButton(
+                    onPressed: _showSettings,
+                    icon: const Icon(Icons.tune_rounded, color: Colors.white),
+                  ),
+                ],
+              ),
             ),
           ),
 
-          // ===== عداد التسجيل / المؤقت =====
-          if (_recording || _recordSeconds > 0)
+          // 6. شارة LIVE أو عداد التسجيل في الأعلى
+          if (_liveCapturing || _recording || _recordSeconds > 0)
             Positioned(
-              top: 92,
+              top: MediaQuery.of(context).padding.top + 68,
               left: 0,
               right: 0,
               child: Center(
-                child: Text(
-                  _mode == 'VIDEO' && _recording
-                      ? '● تسجيل  ${_recordSeconds}s'
-                      : '$_recordSeconds',
-                  style: const TextStyle(
-                    color: Colors.redAccent,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 17,
-                  ),
-                ),
-              ),
-            ),
-
-          // ===== شريط الإضاءة (Exposure) =====
-          if (_maxExposure > _minExposure)
-            Positioned(
-              right: 4,
-              top: 110,
-              bottom: 300,
-              child: Center(
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 8,
-                    horizontal: 2,
-                  ),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                   decoration: BoxDecoration(
-                    color: Colors.black38,
-                    borderRadius: BorderRadius.circular(26),
+                    color: _liveCapturing
+                        ? Colors.amberAccent
+                        : Colors.redAccent.withOpacity(0.9),
+                    borderRadius: BorderRadius.circular(20),
                   ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(
-                        Icons.brightness_6_outlined,
-                        color: Colors.white70,
-                        size: 20,
-                      ),
-                      SizedBox(
-                        height: 150,
-                        width: 44,
-                        child: RotatedBox(
-                          quarterTurns: -1,
-                          child: Slider(
-                            value: _clampDouble(
-                              _exposure,
-                              _minExposure,
-                              _maxExposure,
-                            ),
-                            min: _minExposure,
-                            max: _maxExposure,
-                            divisions: 8,
-                            activeColor: Colors.yellowAccent,
-                            inactiveColor: Colors.white24,
-                            onChanged: _setExposure,
-                          ),
-                        ),
-                      ),
-                      GestureDetector(
-                        onTap: () => _setExposure(0),
-                        child: const Icon(
-                          Icons.restart_alt,
-                          color: Colors.white70,
-                          size: 20,
-                        ),
-                      ),
-                    ],
+                  child: Text(
+                    _liveCapturing
+                        ? '● LIVE'
+                        : (_mode == 'VIDEO' && _recording
+                            ? '● REC  ${_formatTime(_recordSeconds)}'
+                            : '$_recordSeconds'),
+                    style: TextStyle(
+                      color: _liveCapturing ? Colors.black : Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
                   ),
                 ),
               ),
             ),
 
-          // ===== أزرار التحكم السفلية =====
+          // 7. الشريط السفلي الاحترافي
           Positioned(
-            bottom: 24,
+            bottom: MediaQuery.of(context).padding.bottom + 14,
             left: 0,
             right: 0,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // شريط الأنماط اللونية (Photographic Styles)
+                if (_showStyles)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          _styleChip('AI', 'طبيعي ذكي'),
+                          _styleChip('VIVID', 'حيوي مشبع'),
+                          _styleChip('WARM', 'دافئ ذهبي'),
+                          _styleChip('COOL', 'بارد سينمائي'),
+                          _styleChip('BW', 'أبيض وأسود'),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                // أزرار الزوم السريع (1x, 2x, 3x, 5x)
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    for (final z in _zoomChips())
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 5),
-                        child: _zoomChip(z),
-                      ),
+                    for (final z in [1.0, 2.0, 3.0, 5.0])
+                      if (z <= _maxZoom)
+                        GestureDetector(
+                          onTap: () => _setZoom(z),
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 4),
+                            width: 36,
+                            height: 36,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: (_zoom - z).abs() < 0.35
+                                  ? Colors.amberAccent
+                                  : Colors.black54,
+                              border: Border.all(color: Colors.white30),
+                            ),
+                            child: Text(
+                              '${z.toInt()}x',
+                              style: TextStyle(
+                                color: (_zoom - z).abs() < 0.35
+                                    ? Colors.black
+                                    : Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ),
+                        ),
                   ],
                 ),
-                const SizedBox(height: 12),
+
+                const SizedBox(height: 10),
+
+                // أوضاع الكاميرا
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     _modeButton('VIDEO', 'فيديو'),
                     _modeButton('PHOTO', 'صورة'),
                     _modeButton('PORTRAIT', 'بورتريه'),
-                    _modeButton('NIGHT', 'ليل'),
+                    _modeButton('NIGHT', 'ليلي AI'),
                   ],
                 ),
+
                 if (_mode == 'VIDEO')
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
@@ -898,85 +1089,105 @@ class _CameraScreenState extends State<CameraScreen>
                       ],
                     ),
                   ),
+
                 const SizedBox(height: 14),
+
+                // صف زر الالتقاط والمعرض وقلب الكاميرا
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
+                    // زر فتح آخر صورة أو فيديو (محمي من انهيار ملفات الفيديو)
                     GestureDetector(
                       onTap: _openLast,
                       child: Container(
-                        width: 48,
-                        height: 48,
+                        width: 52,
+                        height: 52,
                         clipBehavior: Clip.antiAlias,
                         decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(9),
-                          border: Border.all(color: Colors.white54),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: Colors.white60, width: 1.5),
                           color: Colors.black54,
                         ),
-                        child: _lastPath != null &&
-                                File(_lastPath!).existsSync()
-                            ? Image.file(
-                                File(_lastPath!),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            if (_lastThumbPath != null &&
+                                File(_lastThumbPath!).existsSync())
+                              Image.file(
+                                File(_lastThumbPath!),
                                 fit: BoxFit.cover,
                               )
-                            : const Icon(
+                            else
+                              const Icon(
                                 Icons.photo_library_outlined,
                                 color: Colors.white,
                               ),
-                      ),
-                    ),
-                    GestureDetector(
-                      onTap: _processing ? null : _capture,
-                      child: Opacity(
-                        opacity: _processing ? 0.7 : 1,
-                        child: Container(
-                          width: 74,
-                          height: 74,
-                          padding: const EdgeInsets.all(5),
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: Colors.white,
-                              width: 3,
-                            ),
-                          ),
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: _mode == 'VIDEO'
-                                  ? Colors.redAccent
-                                  : Colors.white,
-                              shape: _mode == 'VIDEO' && _recording
-                                  ? BoxShape.rectangle
-                                  : BoxShape.circle,
-                              borderRadius:
-                                  _mode == 'VIDEO' && _recording
-                                      ? BorderRadius.circular(8)
-                                      : null,
-                            ),
-                            child: _processing
-                                ? const Padding(
-                                    padding: EdgeInsets.all(14),
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2.5,
-                                      color: Colors.black,
-                                    ),
-                                  )
-                                : (_recording
-                                    ? const Icon(
-                                        Icons.stop,
-                                        color: Colors.white,
-                                        size: 30,
-                                      )
-                                    : null),
-                          ),
+                            if (_lastIsVideo)
+                              Container(
+                                color: Colors.black45,
+                                child: const Icon(
+                                  Icons.play_circle_fill_rounded,
+                                  color: Colors.white,
+                                  size: 28,
+                                ),
+                              ),
+                          ],
                         ),
                       ),
                     ),
+
+                    // زر التصوير الاحترافي بتصميم الآيفون
+                    GestureDetector(
+                      onTap: _capture,
+                      child: Container(
+                        width: 80,
+                        height: 80,
+                        padding: const EdgeInsets.all(5),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: _mode == 'VIDEO'
+                                ? Colors.redAccent
+                                : (_livePhoto
+                                    ? Colors.amberAccent
+                                    : Colors.white),
+                            width: 3.5,
+                          ),
+                        ),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 180),
+                          decoration: BoxDecoration(
+                            color: _mode == 'VIDEO'
+                                ? Colors.redAccent
+                                : Colors.white,
+                            shape: _mode == 'VIDEO' && _recording
+                                ? BoxShape.rectangle
+                                : BoxShape.circle,
+                            borderRadius: _mode == 'VIDEO' && _recording
+                                ? BorderRadius.circular(10)
+                                : null,
+                          ),
+                          child: _recording
+                              ? const Icon(
+                                  Icons.stop_rounded,
+                                  color: Colors.white,
+                                  size: 34,
+                                )
+                              : null,
+                        ),
+                      ),
+                    ),
+
+                    // زر تبديل الكاميرا
                     IconButton(
                       onPressed: _switchCamera,
+                      style: IconButton.styleFrom(
+                        backgroundColor: Colors.black54,
+                        padding: const EdgeInsets.all(13),
+                      ),
                       icon: const Icon(
-                        Icons.cameraswitch,
-                        size: 30,
+                        Icons.cameraswitch_rounded,
+                        size: 28,
                         color: Colors.white,
                       ),
                     ),
@@ -985,45 +1196,7 @@ class _CameraScreenState extends State<CameraScreen>
               ],
             ),
           ),
-
-          // ===== معالجة الصورة =====
-          if (_processing)
-            Positioned.fill(
-              child: IgnorePointer(
-                child: Container(
-                  color: Colors.black26,
-                  child: const Center(
-                    child: CircularProgressIndicator(color: Colors.white),
-                  ),
-                ),
-              ),
-            ),
         ],
-      ),
-    );
-  }
-
-  Widget _zoomChip(double z) {
-    final active = (_zoom - z).abs() < 0.15;
-
-    return GestureDetector(
-      onTap: () => _setZoom(z),
-      child: Container(
-        width: 38,
-        height: 38,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: active ? Colors.white : Colors.black45,
-        ),
-        child: Text(
-          _zoomLabel(z),
-          style: TextStyle(
-            color: active ? Colors.black : Colors.white,
-            fontSize: 11,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
       ),
     );
   }
@@ -1031,25 +1204,25 @@ class _CameraScreenState extends State<CameraScreen>
   Widget _modeButton(String key, String label) {
     final selected = _mode == key;
 
-    final color = key == 'VIDEO' && selected
-        ? Colors.redAccent
-        : Colors.greenAccent;
+    final color =
+        key == 'VIDEO' && selected ? Colors.redAccent : Colors.amberAccent;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4),
       child: GestureDetector(
         onTap: () {
-          if (!_recording) {
+          if (!_recording && !_busy) {
+            HapticFeedback.selectionClick();
             setState(() => _mode = key);
           }
         },
         child: Container(
           padding: const EdgeInsets.symmetric(
-            horizontal: 10,
+            horizontal: 12,
             vertical: 7,
           ),
           decoration: BoxDecoration(
-            color: selected ? color.withOpacity(0.18) : Colors.transparent,
+            color: selected ? color.withOpacity(0.18) : Colors.black45,
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
               color: selected ? color : Colors.transparent,
@@ -1061,6 +1234,37 @@ class _CameraScreenState extends State<CameraScreen>
               color: selected ? color : Colors.white70,
               fontWeight: FontWeight.bold,
               fontSize: 13,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _styleChip(String key, String label) {
+    final selected = _style == key;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: GestureDetector(
+        onTap: () => setState(() => _style = key),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: selected
+                ? Colors.amberAccent.withOpacity(0.22)
+                : Colors.black54,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: selected ? Colors.amberAccent : Colors.white24,
+            ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: selected ? Colors.amberAccent : Colors.white,
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
             ),
           ),
         ),
@@ -1100,196 +1304,202 @@ class _CameraScreenState extends State<CameraScreen>
   }
 }
 
-// ===== معالجة الصور العادية (ذكية مع الإضاءة) =====
+// قص الصورة لتطابق الأبعاد المختارة على الشاشة
+img.Image _cropAspect(img.Image src, String aspect) {
+  if (aspect == 'Full') return src;
+
+  final target = switch (aspect) {
+    '1:1' => 1.0,
+    '16:9' => 9 / 16,
+    _ => 3 / 4,
+  };
+
+  final ratio = src.width / src.height;
+  var w = src.width;
+  var h = src.height;
+
+  if (ratio > target) {
+    w = (src.height * target).round();
+  } else {
+    h = (src.width / target).round();
+  }
+
+  final x = ((src.width - w) ~/ 2).clamp(0, src.width - 1);
+  final y = ((src.height - h) ~/ 2).clamp(0, src.height - 1);
+
+  return img.copyCrop(src, x: x, y: y, width: w, height: h);
+}
+
+// تطبيق الفلتر الاحترافي والذكاء الاصطناعي للإضاءة
+img.Image _applySmartAI(
+  img.Image image, {
+  required bool hdr,
+  required bool night,
+  required String style,
+}) {
+  // قياس إضاءة الصورة الحقيقية (حساس الشمس والظلام)
+  double totalLum = 0;
+  int brightPixels = 0;
+  int samples = 0;
+
+  for (int y = 0; y < image.height; y += 16) {
+    for (int x = 0; x < image.width; x += 16) {
+      final p = image.getPixel(x, y);
+      final lum = 0.299 * p.r + 0.587 * p.g + 0.114 * p.b;
+      totalLum += lum;
+      if (lum > 225) brightPixels++;
+      samples++;
+    }
+  }
+
+  final avgLum = samples > 0 ? totalLum / samples : 128.0;
+  final harshSun = samples > 0 && (brightPixels / samples) > 0.16;
+  final isLowLight = night || avgLum < 85;
+
+  double brightness = 1.0;
+  double contrast = 1.04;
+  double saturation = 1.05;
+  double gamma = 1.0;
+
+  if (harshSun) {
+    // حماية الصورة من احتراق الشمس القوية
+    brightness = 0.95;
+    contrast = 1.07;
+    saturation = 1.08;
+    gamma = 1.06;
+  } else if (isLowLight) {
+    // تفتيح ذكي للأماكن المظلمة والليل
+    brightness = 1.08;
+    contrast = 1.11;
+    saturation = 1.06;
+    gamma = 0.85;
+  } else if (hdr) {
+    brightness = 1.01;
+    contrast = 1.06;
+    saturation = 1.08;
+    gamma = 0.96;
+  }
+
+  if (style == 'VIVID') {
+    saturation *= 1.18;
+    contrast *= 1.05;
+  } else if (style == 'WARM') {
+    saturation *= 1.10;
+    gamma *= 0.95;
+  } else if (style == 'COOL') {
+    contrast *= 1.06;
+    saturation *= 0.94;
+  } else if (style == 'BW') {
+    saturation = 0.0;
+    contrast *= 1.15;
+  }
+
+  return img.adjustColor(
+    image,
+    brightness: brightness,
+    contrast: contrast,
+    saturation: saturation,
+    gamma: gamma,
+  );
+}
+
 Uint8List _photoBytes(Map<String, dynamic> args) {
   final bytes = args['bytes'] as Uint8List;
   final decoded = img.decodeImage(bytes);
 
   if (decoded == null) return bytes;
 
-  var photo = img.bakeOrientation(decoded);
+  var oriented = img.bakeOrientation(decoded);
 
-  if (args['mirror'] == true) {
-    photo = img.flipHorizontal(photo);
+  final flip = args['flip'] as bool;
+  if (flip) {
+    oriented = img.flipHorizontal(oriented);
   }
 
+  final aspect = args['aspect'] as String;
+  oriented = _cropAspect(oriented, aspect);
+
+  final zoom = (args['zoom'] as num).toDouble();
   final hdr = args['hdr'] as bool;
   final night = args['night'] as bool;
+  final style = args['style'] as String;
 
-  // قياس متوسط إضاءة المشهد من نسخة مصغّرة (سريع جدًا)
-  final sampleW = 96;
-  final sampleH = (photo.height * sampleW / photo.width).round();
-  final sample = img.copyResize(photo, width: sampleW, height: sampleH);
-
-  double sum = 0;
-  final total = sample.width * sample.height;
-
-  for (var y = 0; y < sample.height; y++) {
-    for (var x = 0; x < sample.width; x++) {
-      final p = sample.getPixel(x, y);
-      sum += 0.2126 * p.r + 0.7152 * p.g + 0.0722 * p.b;
-    }
-  }
-
-  final mean = total > 0 ? sum / total : 128.0;
-
-  // ضبط السطوع تلقائيًا حسب ظروف الإضاءة (منع احتراق الشمس / رفع الظلام)
-  double brightness = 1.0;
-  if (mean > 175) {
-    brightness = 0.88;
-  } else if (mean > 150) {
-    brightness = 0.95;
-  } else if (mean < 55) {
-    brightness = 1.45;
-  } else if (mean < 85) {
-    brightness = 1.25;
-  } else if (mean < 110) {
-    brightness = 1.10;
-  }
-
-  if (night) {
-    if (brightness < 1.30) brightness = 1.30;
-    if (brightness > 1.60) brightness = 1.60;
-  }
-
-  final fixed = img.adjustColor(
-    photo,
-    brightness: brightness,
-    contrast: night ? 1.05 : (hdr ? 1.08 : 1.04),
-    saturation: night ? 1.15 : (hdr ? 1.10 : 1.05),
-    gamma: night ? 0.95 : 1.0,
+  final fixed = _applySmartAI(
+    oriented,
+    hdr: hdr,
+    night: night,
+    style: style,
   );
 
-  return Uint8List.fromList(img.encodeJpg(fixed, quality: 95));
+  return Uint8List.fromList(
+    img.encodeJpg(
+      fixed,
+      quality: zoom > 4 ? 96 : 98,
+    ),
+  );
 }
 
-// ===== معالجة وضع البورتريه =====
 Uint8List _portraitBytes(Map<String, dynamic> args) {
   final bytes = args['bytes'] as Uint8List;
   final mw = args['width'] as int;
   final mh = args['height'] as int;
   final mask = (args['mask'] as List).cast<double>();
-  final mirror = args['mirror'] == true;
+  final aspect = args['aspect'] as String;
+  final flip = args['flip'] as bool;
+  final hdr = args['hdr'] as bool;
+  final style = args['style'] as String;
 
   final decoded = img.decodeImage(bytes);
+
   if (decoded == null || mw <= 0 || mh <= 0 || mask.isEmpty) {
     return bytes;
   }
 
   var fg = img.bakeOrientation(decoded);
-  final w = fg.width;
-  final h = fg.height;
+  fg = _applySmartAI(fg, hdr: hdr, night: false, style: style);
 
-  if (w <= 0 || h <= 0) return bytes;
+  // تسريع البورتريه 15 ضعفاً عبر تصغير الخلفية قبل التمويه لمنع تعليق الهاتف
+  final sw = (fg.width ~/ 4).clamp(1, fg.width);
+  final sh = (fg.height ~/ 4).clamp(1, fg.height);
+  final smallBg = img.copyResize(fg, width: sw, height: sh);
+  final bg = img.gaussianBlur(smallBg, radius: 6);
 
-  // خريطة الشفافية من الماسك
-  final alpha = Float32List(w * h);
+  final out = img.Image(width: fg.width, height: fg.height);
 
-  for (var y = 0; y < h; y++) {
-    final my = clampInt((y * mh) ~/ h, 0, mh - 1);
+  for (var y = 0; y < fg.height; y++) {
+    final my = ((y * mh) / fg.height).floor().clamp(0, mh - 1);
+    final by = ((y * sh) / fg.height).floor().clamp(0, sh - 1);
 
-    for (var x = 0; x < w; x++) {
-      final mx = clampInt((x * mw) ~/ w, 0, mw - 1);
+    for (var x = 0; x < fg.width; x++) {
+      final mx = ((x * mw) / fg.width).floor().clamp(0, mw - 1);
+      final bx = ((x * sw) / fg.width).floor().clamp(0, sw - 1);
 
-      final idx = my * mw + mx;
+      final i = my * mw + mx;
+      final a = (i < mask.length ? mask[i] : 0.0).clamp(0.0, 1.0);
 
-      double a = idx < mask.length ? mask[idx] : 0.0;
-      a = clampDouble(a, 0.0, 1.0);
-
-      // قطع الهالة الزائدة حول الشخص + تنعيم S-Curve
-      a = clampDouble((a - 0.3) / 0.4, 0.0, 1.0);
-      a = a * a * (3 - 2 * a);
-
-      alpha[y * w + x] = a;
-    }
-  }
-
-  // عكس الماسك مع الصورة للكاميرا الأمامية
-  if (mirror) {
-    for (var y = 0; y < h; y++) {
-      for (var x = 0; x < w ~/ 2; x++) {
-        final i1 = y * w + x;
-        final i2 = y * w + (w - 1 - x);
-        final t = alpha[i1];
-        alpha[i1] = alpha[i2];
-        alpha[i2] = t;
-      }
-    }
-    fg = img.flipHorizontal(fg);
-  }
-
-  // تنعيم الحواف
-  boxBlurAlpha(alpha, w, h);
-
-  // خلفية بوكيه سريعة: تصغير ← تمويه ← تكبير
-  var smallW = (w / 6).round();
-  if (smallW < 8) smallW = w;
-  final smallH = (h * smallW / w).round();
-
-  final bg = img.copyResize(
-    img.gaussianBlur(
-      img.copyResize(fg, width: smallW, height: smallH),
-      radius: 6,
-    ),
-    width: w,
-    height: h,
-    interpolation: img.Interpolation.cubic,
-  );
-
-  final out = img.Image(width: w, height: h);
-
-  for (var y = 0; y < h; y++) {
-    for (var x = 0; x < w; x++) {
-      final a = alpha[y * w + x];
       final f = fg.getPixel(x, y);
-      final b = bg.getPixel(x, y);
+      final b = bg.getPixel(bx, by);
+
+      final alpha = ((a - 0.25) / 0.5).clamp(0.0, 1.0);
 
       out.setPixelRgba(
         x,
         y,
-        (f.r * a + b.r * (1 - a)).round(),
-        (f.g * a + b.g * (1 - a)).round(),
-        (f.b * a + b.b * (1 - a)).round(),
+        (f.r * alpha + b.r * (1 - alpha)).round(),
+        (f.g * alpha + b.g * (1 - alpha)).round(),
+        (f.b * alpha + b.b * (1 - alpha)).round(),
         255,
       );
     }
   }
 
-  return Uint8List.fromList(img.encodeJpg(out, quality: 95));
+  var finalImg = flip ? img.flipHorizontal(out) : out;
+  finalImg = _cropAspect(finalImg, aspect);
+
+  return Uint8List.fromList(
+    img.encodeJpg(finalImg, quality: 96),
+  );
 }
-
-void boxBlurAlpha(Float32List a, int w, int h) {
-  final tmp = Float32List(a.length);
-
-  for (var y = 0; y < h; y++) {
-    for (var x = 0; x < w; x++) {
-      double s = 0;
-      int n = 0;
-
-      for (var dy = -1; dy <= 1; dy++) {
-        final yy = y + dy;
-        if (yy < 0 || yy >= h) continue;
-
-        for (var dx = -1; dx <= 1; dx++) {
-          final xx = x + dx;
-          if (xx < 0 || xx >= w) continue;
-
-          s += a[yy * w + xx];
-          n++;
-        }
-      }
-
-      tmp[y * w + x] = s / n;
-    }
-  }
-
-  a.setAll(0, tmp);
-}
-
-double clampDouble(double v, double lo, double hi) =>
-    v < lo ? lo : (v > hi ? hi : v);
-
-int clampInt(int v, int lo, int hi) => v < lo ? lo : (v > hi ? hi : v);
 
 class _GridPainter extends CustomPainter {
   @override
@@ -1320,6 +1530,44 @@ class _GridPainter extends CustomPainter {
       Offset(0, size.height * 2 / 3),
       Offset(size.width, size.height * 2 / 3),
       p,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+// أيقونة عدسة احترافية مرسومة برمجياً داخل التطبيق
+class _ProLensLogoPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final r = size.width / 2;
+
+    final ringPaint = Paint()
+      ..color = Colors.amberAccent
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.5;
+
+    final bodyPaint = Paint()
+      ..color = const Color(0xFF222222)
+      ..style = PaintingStyle.fill;
+
+    final glassPaint = Paint()
+      ..color = const Color(0xFF0D47A1)
+      ..style = PaintingStyle.fill;
+
+    finaldotPaint = Paint()
+      ..color = Colors.white70
+      ..style = PaintingStyle.fill;
+
+    canvas.drawCircle(center, r, bodyPaint);
+    canvas.drawCircle(center, r - 1.5, ringPaint);
+    canvas.drawCircle(center, r * 0.58, glassPaint);
+    canvas.drawCircle(
+      Offset(center.dx - r * 0.2, center.dy - r * 0.2),
+      r * 0.14,
+      finaldotPaint,
     );
   }
 
