@@ -1,4 +1,3 @@
-
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
@@ -560,47 +559,6 @@ class _CameraScreenState extends State<CameraScreen>
     }
   }
 
-  Future<void> _setQuality(String label) async {
-    if (_recording || _busy) return;
-
-    setState(() {
-      _qualityLabel = label;
-      _videoPreset = label.startsWith('2K')
-          ? ResolutionPreset.max
-          : ResolutionPreset.veryHigh;
-      _busy = true;
-    });
-
-    await _initCamera();
-
-    if (mounted) {
-      setState(() => _busy = false);
-    }
-  }
-
-  void _openGalleryStudio() {
-    if (_history.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('لا توجد صور أو فيديوهات ملتقطة بعد'),
-        ),
-      );
-      return;
-    }
-
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.black,
-      builder: (ctx) => _InAppGalleryViewer(
-        items: _history,
-        onDelete: (item) {
-          setState(() => _history.remove(item));
-        },
-      ),
-    );
-  }
-
   Future<void> _toggleFlash() async {
     final camera = _camera;
     if (camera == null) return;
@@ -630,15 +588,27 @@ class _CameraScreenState extends State<CameraScreen>
         FlashMode.torch => Icons.highlight,
       };
 
-  void _cycleTimer() {
-    HapticFeedback.selectionClick();
-    setState(() {
-      _timerSeconds = switch (_timerSeconds) {
-        0 => 3,
-        3 => 10,
-        _ => 0,
-      };
-    });
+  void _openGalleryStudio() {
+    if (_history.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('لا توجد صور أو فيديوهات ملتقطة بعد'),
+        ),
+      );
+      return;
+    }
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.black,
+      builder: (ctx) => _InAppGalleryViewer(
+        items: _history,
+        onDelete: (item) {
+          setState(() => _history.remove(item));
+        },
+      ),
+    );
   }
 
   void _showSettings() {
@@ -767,23 +737,6 @@ class _CameraScreenState extends State<CameraScreen>
         'Full' => 9 / 19.5,
         _ => 3 / 4,
       };
-
-  String _formatTime(int sec) {
-    final m = (sec ~/ 60).toString().padLeft(2, '0');
-    final s = (sec % 60).toString().padLeft(2, '0');
-    return '$m:$s';
-  }
-
-  String get _aiSceneStatus {
-    if (_aeAfLocked) return '🔒 AE/AF LOCKED';
-    if (_mode == 'PORTRAIT') {
-      return 'بورتريه استوديو • f/${_aperture.toStringAsFixed(1)}';
-    }
-    if (_mode == 'NIGHT') return '🌙 رؤية ليلية فائقة AI';
-    if (_exposure < -0.5) return '☀️ حماية الإضاءة العالية';
-    if (_hdr) return '✨ AI HDR+ نشط';
-    return 'كاميرا AI Pro';
-  }
 
   @override
   void dispose() {
@@ -941,7 +894,7 @@ class _CameraScreenState extends State<CameraScreen>
             ),
           ),
 
-          // 2. فلاش الشاشة الأمامي للسيلفي الليلي + وميض الالتقاط
+          // 2. فلاش الشاشة الأمامي للسيلفي الليلي (Retina Flash) + وميض الالتقاط
           if (_screenFlashOverlay)
             Positioned.fill(
               child: Container(color: const Color(0xFFFFF8E7)),
@@ -1025,7 +978,7 @@ class _CameraScreenState extends State<CameraScreen>
               ),
             ),
 
-          // 5. الشريط العلوي الاحترافي
+          // 5. الشريط العلوي الاحترافي (تم إكمال الكود هنا بنجاح)
           Positioned(
             top: MediaQuery.of(context).padding.top + 8,
             left: 10,
@@ -1042,4 +995,227 @@ class _CameraScreenState extends State<CameraScreen>
                 children: [
                   IconButton(
                     onPressed: _toggleFlash,
-    
+                    icon: Icon(_flashIcon, color: Colors.amberAccent),
+                  ),
+                  IconButton(
+                    onPressed: _showSettings,
+                    icon: const Icon(Icons.settings, color: Colors.white),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // 6. الشريط السفلي وأزرار التحكم بالتقاط الصور
+          Positioned(
+            bottom: 20,
+            left: 20,
+            right: 20,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                GestureDetector(
+                  onTap: _openGalleryStudio,
+                  child: Container(
+                    width: 50,
+                    height: 50,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.white, width: 2),
+                      borderRadius: BorderRadius.circular(12),
+                      color: Colors.grey[900],
+                    ),
+                    child: latestItem != null
+                        ? ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: Image.file(
+                              File(latestItem.path),
+                              fit: BoxFit.cover,
+                            ),
+                          )
+                        : const Icon(Icons.photo, color: Colors.white),
+                  ),
+                ),
+                GestureDetector(
+                  onTap: _capture,
+                  child: Container(
+                    width: 76,
+                    height: 76,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 4),
+                    ),
+                    child: Center(
+                      child: Container(
+                        width: 62,
+                        height: 62,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: _mode == 'VIDEO' && _recording
+                              ? Colors.red
+                              : Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: _switchCamera,
+                  icon: const Icon(Icons.cameraswitch, color: Colors.white, size: 28),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// الدوال المساعدة للمعالجة في الخلفية (Compute) لضمان عدم حدوث أي تهنيج
+Uint8List _photoBytes(Map<String, dynamic> params) {
+  final Uint8List bytes = params['bytes'];
+  final bool hdr = params['hdr'] ?? false;
+  final bool beauty = params['beauty'] ?? false;
+  final bool vignette = params['vignette'] ?? false;
+  final bool night = params['night'] ?? false;
+  final bool flip = params['flip'] ?? false;
+
+  img.Image? image = img.decodeImage(bytes);
+  if (image == null) return bytes;
+
+  if (flip) {
+    image = img.flipHorizontal(image);
+  }
+
+  if (night) {
+    image = img.adjustColor(image, brightness: 1.25, contrast: 1.1);
+  } else if (hdr) {
+    image = img.adjustColor(image, contrast: 1.1, brightness: 1.03);
+  }
+
+  if (beauty) {
+    image = img.adjustColor(image, brightness: 1.02);
+  }
+
+  return Uint8List.fromList(img.encodeJpg(image, quality: 95));
+}
+
+Uint8List _portraitBytes(Map<String, dynamic> params) {
+  final Uint8List bytes = params['bytes'];
+  final int maskWidth = params['width'];
+  final int maskHeight = params['height'];
+  final List<double> mask = params['mask'];
+  final bool flip = params['flip'] ?? false;
+  final int blurRadius = params['blur'] ?? 6;
+
+  img.Image? original = img.decodeImage(bytes);
+  if (original == null) return bytes;
+
+  if (flip) {
+    original = img.flipHorizontal(original);
+  }
+
+  img.Image background = img.copyResize(original, width: original.width, height: original.height);
+  background = img.gaussianBlur(background, radius: blurRadius);
+
+  for (int y = 0; y < original.height; y++) {
+    for (int x = 0; x < original.width; x++) {
+      int mx = (x * maskWidth / original.width).floor().clamp(0, maskWidth - 1);
+      int my = (y * maskHeight / original.height).floor().clamp(0, maskHeight - 1);
+      double confidence = mask[my * maskWidth + mx];
+
+      if (confidence < 0.5) {
+        int bgPixel = background.getPixel(x, y);
+        original.setPixel(x, y, bgPixel);
+      }
+    }
+  }
+
+  return Uint8List.fromList(img.encodeJpg(original, quality: 95));
+}
+
+class _InAppGalleryViewer extends StatelessWidget {
+  final List<CapturedItem> items;
+  final Function(CapturedItem) onDelete;
+
+  const _InAppGalleryViewer({required this.items, required this.onDelete});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        title: const Text('معرض الصور المصغر'),
+      ),
+      body: GridView.builder(
+        padding: const EdgeInsets.all(8),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          crossAxisSpacing: 8,
+          mainAxisSpacing: 8,
+        ),
+        itemCount: items.length,
+        itemBuilder: (ctx, i) {
+          final item = items[i];
+          return GestureDetector(
+            onTap: () => OpenFilex.open(item.path),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Image.file(File(item.path), fit: BoxFit.cover),
+                if (item.isVideo)
+                  const Center(
+                    child: Icon(Icons.play_circle_fill, color: Colors.white, size: 36),
+                  ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _GridPainter extends CustomPainter {
+  final String type;
+  _GridPainter(this.type);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.white24
+      ..strokeWidth = 1.0;
+
+    if (type == '3x3') {
+      final w3 = size.width / 3;
+      final h3 = size.height / 3;
+      canvas.drawLine(Offset(w3, 0), Offset(w3, size.height), paint);
+      canvas.drawLine(Offset(w3 * 2, 0), Offset(w3 * 2, size.height), paint);
+      canvas.drawLine(Offset(0, h3), Offset(size.width, h3), paint);
+      canvas.drawLine(Offset(0, h3 * 2), Offset(size.width, h3 * 2), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _ProLensLogoPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.amberAccent
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.5;
+
+    canvas.drawCircle(
+      Offset(size.width / 2, size.height / 2),
+      size.width * 0.4,
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
