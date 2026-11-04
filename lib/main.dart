@@ -373,7 +373,10 @@ class _CameraScreenState extends State<CameraScreen>
         setState(() => _screenFlashOverlay = false);
       }
 
-      final bytes = await File(shot.path).readAsBytes();
+      final fileObj = File(shot.path);
+      if (!await fileObj.exists()) return;
+
+      final bytes = await fileObj.readAsBytes();
       Uint8List result = bytes;
 
       // حساب نصف قطر العزل بناءً على فتحة العدسة المختارة f-stop
@@ -428,8 +431,12 @@ class _CameraScreenState extends State<CameraScreen>
         );
       }
 
-      await File(shot.path).writeAsBytes(result, flush: true);
-      await Gal.putImage(shot.path);
+      await fileObj.writeAsBytes(result, flush: true);
+      
+      // التأكد من استقرار الملف قبل تمريره لمعرض الصور الخارجي
+      if (await fileObj.exists() && await fileObj.length() > 0) {
+        await Gal.putImage(shot.path);
+      }
 
       String? liveClipPath;
 
@@ -446,7 +453,9 @@ class _CameraScreenState extends State<CameraScreen>
           await Future.delayed(const Duration(milliseconds: 1500));
           final liveClip = await camera.stopVideoRecording();
           liveClipPath = liveClip.path;
-          await Gal.putVideo(liveClip.path);
+          if (await File(liveClipPath).exists()) {
+            await Gal.putVideo(liveClip.path);
+          }
         } catch (_) {
         } finally {
           if (mounted) {
@@ -501,7 +510,10 @@ class _CameraScreenState extends State<CameraScreen>
         final video = await camera.stopVideoRecording();
         HapticFeedback.heavyImpact();
 
-        await Gal.putVideo(video.path);
+        final videoFile = File(video.path);
+        if (await videoFile.exists() && await videoFile.length() > 0) {
+          await Gal.putVideo(video.path);
+        }
 
         if (mounted) {
           setState(() {
@@ -978,7 +990,7 @@ class _CameraScreenState extends State<CameraScreen>
               ),
             ),
 
-          // 5. الشريط العلوي الاحترافي (تم إكمال الكود هنا بنجاح)
+          // 5. الشريط العلوي الاحترافي
           Positioned(
             top: MediaQuery.of(context).padding.top + 8,
             left: 10,
