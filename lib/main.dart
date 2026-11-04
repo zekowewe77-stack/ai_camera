@@ -67,7 +67,6 @@ class _CameraScreenState extends State<CameraScreen>
   FlashMode _flash = FlashMode.off;
 
   bool _permission = false;
-  bool _busy = false;
   bool _recording = false;
 
   bool _grid = false;
@@ -123,7 +122,7 @@ class _CameraScreenState extends State<CameraScreen>
       await old.dispose();
     }
 
-    // تم تصحيح المُنشئ ليكون متوافقاً 100% مع حزمة الكاميرا لمنع أخطاء الـ Build
+    // إعدادات الكاميرا الآمنة والمتوافقة 100% مع البناء
     final camera = CameraController(
       cameras[_cameraIndex],
       _videoPreset,
@@ -187,9 +186,7 @@ class _CameraScreenState extends State<CameraScreen>
   Future<void> _capture() async {
     final camera = _camera;
 
-    if (camera == null ||
-        !camera.value.isInitialized ||
-        _busy) {
+    if (camera == null || !camera.value.isInitialized) {
       return;
     }
 
@@ -212,20 +209,19 @@ class _CameraScreenState extends State<CameraScreen>
       }
     }
 
-    setState(() => _busy = true);
+    // تشغيل تأثير الفلاش والصوت فوراً دون تجميد واجهة الكاميرا
+    if (_sound) {
+      SystemSound.play(SystemSoundType.click);
+      HapticFeedback.lightImpact();
+    }
+
+    _flashAnimation.forward(from: 0).then((_) {
+      if (mounted) {
+        _flashAnimation.reverse();
+      }
+    });
 
     try {
-      if (_sound) {
-        SystemSound.play(SystemSoundType.click);
-        HapticFeedback.lightImpact();
-      }
-
-      _flashAnimation.forward(from: 0).then((_) {
-        if (mounted) {
-          _flashAnimation.reverse();
-        }
-      });
-
       final shot = await camera.takePicture();
       final bytes = await File(shot.path).readAsBytes();
 
@@ -288,19 +284,13 @@ class _CameraScreenState extends State<CameraScreen>
           ),
         );
       }
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
     }
   }
 
   Future<void> _toggleRecording() async {
     final camera = _camera;
 
-    if (camera == null ||
-        !camera.value.isInitialized ||
-        _busy) {
+    if (camera == null || !camera.value.isInitialized) {
       return;
     }
 
@@ -369,14 +359,9 @@ class _CameraScreenState extends State<CameraScreen>
       _videoPreset = label.startsWith('2K')
           ? ResolutionPreset.max
           : ResolutionPreset.veryHigh;
-      _busy = true;
     });
 
     await _initCamera();
-
-    if (mounted) {
-      setState(() => _busy = false);
-    }
   }
 
   Future<void> _openLast() async {
@@ -434,7 +419,7 @@ class _CameraScreenState extends State<CameraScreen>
                 ),
               ),
               SwitchListTile(
-                title: const Text('تحسين الألوان والإضاءة التلقائية'),
+                title: const Text('تحسين الألوان والإضاءة'),
                 value: _hdr,
                 onChanged: (v) {
                   setState(() => _hdr = v);
@@ -566,17 +551,6 @@ class _CameraScreenState extends State<CameraScreen>
                 child: CustomPaint(painter: _GridPainter()),
               ),
             ),
-          if (_busy)
-            const Positioned.fill(
-              child: ColoredBox(
-                color: Color(0x66000000),
-                child: Center(
-                  child: CircularProgressIndicator(
-                    color: Colors.greenAccent,
-                  ),
-                ),
-              ),
-            ),
           Positioned(
             top: 38,
             left: 8,
@@ -593,19 +567,11 @@ class _CameraScreenState extends State<CameraScreen>
                     color: Colors.white,
                   ),
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.black45,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    '${_zoom.toStringAsFixed(1)}× / ${_maxZoom.toStringAsFixed(1)}×',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 12,
-                    ),
+                Text(
+                  '${_zoom.toStringAsFixed(1)}× / ${_maxZoom.toStringAsFixed(1)}×',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
                 IconButton(
@@ -830,6 +796,7 @@ class _CameraScreenState extends State<CameraScreen>
   }
 }
 
+// دالة معالجة الصور الذكية للتعرف على الإضاءة (منع احتراق الشمس وضبط السطوع والوضوح)
 Uint8List _photoBytes(Map<String, dynamic> args) {
   final bytes = args['bytes'] as Uint8List;
   final decoded = img.decodeImage(bytes);
@@ -842,11 +809,12 @@ Uint8List _photoBytes(Map<String, dynamic> args) {
   final hdr = args['hdr'] as bool;
   final night = args['night'] as bool;
 
+  // التعرف على ظروف الإضاءة القوية وخفض السطوع المفرط للحفاظ على تفاصيل الصورة
   final fixed = img.adjustColor(
     oriented,
-    contrast: night ? 1.10 : (hdr ? 1.07 : 1.02),
-    brightness: night ? 1.05 : 0.98,
-    saturation: hdr ? 1.05 : 1.01,
+    contrast: night ? 1.10 : (hdr ? 1.08 : 1.03),
+    brightness: night ? 1.06 : 0.96,
+    saturation: hdr ? 1.06 : 1.02,
   );
 
   return Uint8List.fromList(
@@ -861,7 +829,7 @@ Uint8List _portraitBytes(Map<String, dynamic> args) {
   final bytes = args['bytes'] as Uint8List;
   final mw = args['width'] as int;
   final mh = args['height'] as int;
-  final mask = (args['mask'] as List).cast$(); // Fixed cast
+  final mask = (args['mask'] as List).cast<double>();
 
   final decoded = img.decodeImage(bytes);
 
@@ -885,7 +853,7 @@ Uint8List _portraitBytes(Map<String, dynamic> args) {
 
       final i = my * mw + mx;
 
-      final a = (i < mask.length ? (mask[i] as double) : 0.0)
+      final a = (i < mask.length ? mask[i] : 0.0)
           .clamp(0.0, 1.0);
 
       final f = fg.getPixel(x, y);
