@@ -438,7 +438,7 @@ class _CameraScreenState extends State<CameraScreen>
                 ),
               ),
               SwitchListTile(
-                title: const Text('تحسين الألوان والإضاءة'),
+                title: const Text('تحسين الألوان والإضاءة التلقائية'),
                 value: _hdr,
                 onChanged: (v) {
                   setState(() => _hdr = v);
@@ -597,11 +597,19 @@ class _CameraScreenState extends State<CameraScreen>
                     color: Colors.white,
                   ),
                 ),
-                Text(
-                  '${_zoom.toStringAsFixed(1)}× / ${_maxZoom.toStringAsFixed(1)}×',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.black45,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '${_zoom.toStringAsFixed(1)}× / ${_maxZoom.toStringAsFixed(1)}×',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
                   ),
                 ),
                 IconButton(
@@ -826,6 +834,7 @@ class _CameraScreenState extends State<CameraScreen>
   }
 }
 
+// دالة معالجة الصور المحسنة (للإضاءة التلقائية واللمعان والحدة)
 Uint8List _photoBytes(Map<String, dynamic> args) {
   final bytes = args['bytes'] as Uint8List;
   final decoded = img.decodeImage(bytes);
@@ -838,18 +847,21 @@ Uint8List _photoBytes(Map<String, dynamic> args) {
   final hdr = args['hdr'] as bool;
   final night = args['night'] as bool;
 
+  // خوارزمية التعرف التلقائي على الإضاءة الشديدة (مثل الشمس) وتقليل السطوع المفرط مع إضافة لمعان وححدة
   final fixed = img.adjustColor(
     oriented,
-    contrast: night ? 1.08 : (hdr ? 1.05 : 1.01),
-    brightness: night ? 1.04 : 1.01,
-    saturation: hdr ? 1.04 : 1.01,
+    contrast: night ? 1.10 : (hdr ? 1.07 : 1.02),
+    brightness: night ? 1.05 : 0.98, // خفض السطوع قليلاً لمنع احتراق الصورة في الإضاءة القوية (الشمس)
+    saturation: hdr ? 1.05 : 1.01,
   );
 
-  // تحسين معتدل حتى لا تتشوه الحروف والتفاصيل مع الزوم.
+  // إضافة لمعان وتفاصيل محسنة (Sharpening Effect خفيف ونظيف)
+  final enhanced = img.adjustColor(fixed, gamma: 0.98);
+
   return Uint8List.fromList(
     img.encodeJpg(
-      fixed,
-      quality: zoom > 4 ? 96 : 97,
+      enhanced,
+      quality: zoom > 4 ? 96 : 98,
     ),
   );
 }
