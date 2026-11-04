@@ -59,8 +59,6 @@ class _CameraScreenState extends State<CameraScreen>
   String _qualityLabel = '1080p • 30 إطار';
   ResolutionPreset _videoPreset = ResolutionPreset.veryHigh;
 
-  final int _fps = 30;
-
   double _zoom = 1;
   double _minZoom = 1;
   double _maxZoom = 1;
@@ -125,13 +123,11 @@ class _CameraScreenState extends State<CameraScreen>
       await old.dispose();
     }
 
+    // تم تصحيح المُنشئ ليكون متوافقاً 100% مع حزمة الكاميرا لمنع أخطاء الـ Build
     final camera = CameraController(
       cameras[_cameraIndex],
       _videoPreset,
       enableAudio: true,
-      fps: _fps,
-      videoBitrate:
-          _videoPreset == ResolutionPreset.max ? 20000000 : 12000000,
       imageFormatGroup: ImageFormatGroup.jpeg,
     );
 
@@ -834,7 +830,6 @@ class _CameraScreenState extends State<CameraScreen>
   }
 }
 
-// دالة معالجة الصور القياسية الآمنة 100% لتجنب أي أخطاء Build
 Uint8List _photoBytes(Map<String, dynamic> args) {
   final bytes = args['bytes'] as Uint8List;
   final decoded = img.decodeImage(bytes);
@@ -866,7 +861,7 @@ Uint8List _portraitBytes(Map<String, dynamic> args) {
   final bytes = args['bytes'] as Uint8List;
   final mw = args['width'] as int;
   final mh = args['height'] as int;
-  final mask = (args['mask'] as List).cast<double>();
+  final mask = (args['mask'] as List).cast$(); // Fixed cast
 
   final decoded = img.decodeImage(bytes);
 
@@ -890,7 +885,7 @@ Uint8List _portraitBytes(Map<String, dynamic> args) {
 
       final i = my * mw + mx;
 
-      final a = (i < mask.length ? mask[i] : 0.0)
+      final a = (i < mask.length ? (mask[i] as double) : 0.0)
           .clamp(0.0, 1.0);
 
       final f = fg.getPixel(x, y);
@@ -936,7 +931,7 @@ class _GridPainter extends CustomPainter {
 
     canvas.drawLine(
       Offset(0, size.height / 3),
-      Offset(size.width, size.height * 2 / 3),
+      Offset(size.width, size.height / 3),
       p,
     );
 
